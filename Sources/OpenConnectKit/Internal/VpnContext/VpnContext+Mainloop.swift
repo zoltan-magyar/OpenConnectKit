@@ -25,17 +25,14 @@ extension VpnContext {
   ///
   /// The mainloop will exit gracefully after processing the cancel command.
   internal func stopMainloop() {
-    guard case .connected = connectionStatus else {
-      return
-    }
-
     sendCommand(.cancel)
   }
 
-  /// Runs the mainloop until error or cancellation.
+  /// Runs the mainloop until error or cancellation via command pipe.
   ///
   /// This method blocks the current thread while the mainloop is running.
   /// It should only be called from a background task.
+  /// The mainloop exits when a cancel command is sent via the command pipe.
   private func runMainloop() {
     guard let vpnInfo = vpnInfo else {
       updateStatus(.disconnected(error: .notInitialized))
@@ -43,33 +40,29 @@ extension VpnContext {
     }
 
     // Run the OpenConnect mainloop
-    // This blocks until the connection ends or is cancelled
-    while !Task.isCancelled {
-      let ret = openconnect_mainloop(
-        vpnInfo,
-        session.configuration.reconnectTimeout,
-        session.configuration.reconnectInterval
-      )
+    // This blocks until the connection ends or is cancelled via command pipe
+    let ret = openconnect_mainloop(
+      vpnInfo,
+      session.configuration.reconnectTimeout,
+      session.configuration.reconnectInterval
+    )
 
-      if ret != 0 {
-        break
-      }
-    }
-
-    // Determine the disconnect reason
+    // Determine the disconnect reason based on return value and current status
     let error: VpnError?
     switch connectionStatus {
     case .disconnected:
       // Already disconnected (user initiated)
       error = nil
     default:
-      // Unexpected disconnect - use setup error if available
-      error = setupError ?? .connectionFailed(reason: "Connection lost")
+      // Unexpected disconnect - mainloop exited with error
+      if ret < 0 {
+        error = .connectionFailed(reason: "Connection lost")
+      } else {
+        // Normal exit (cancelled)
+        error = nil
+      }
     }
 
     updateStatus(.disconnected(error: error))
-
-    // Clear any captured setup error
-    setupError = nil
   }
 }

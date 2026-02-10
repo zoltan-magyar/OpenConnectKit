@@ -118,44 +118,6 @@ internal func statsCallback(
   context.session.handleStats(vpnStats)
 }
 
-/// C callback for TUN device setup. Called during connection establishment.
-internal func setupTunCallback(privdata: UnsafeMutableRawPointer?) {
-  guard let privdata = privdata else {
-    return
-  }
-
-  let context = VpnContext.extractContext(from: privdata)
-
-  context.updateStatus(.connecting(stage: "Configuring tunnel"))
-
-  guard let vpncScriptPath = context.findVpncScript() else {
-    context.setupError = .vpncScriptFailed
-    return
-  }
-
-  guard let vpnInfo = context.vpnInfo else {
-    context.setupError = .notInitialized
-    return
-  }
-
-  let vpncScriptPtr = vpncScriptPath.withCString { strdup($0) }
-  let interfaceNamePtr = context.session.configuration.interfaceName?.withCString { strdup($0) }
-
-  defer {
-    free(vpncScriptPtr)
-    free(interfaceNamePtr)
-  }
-
-  let ret = openconnect_setup_tun_device(vpnInfo, vpncScriptPtr, interfaceNamePtr)
-  if ret != 0 {
-    context.setupError = .tunSetupFailed
-  } else {
-    // TUN device setup succeeded - update status to connected
-    // The interface name is now available via openconnect_get_ifname()
-    context.updateStatus(.connected)
-  }
-}
-
 // MARK: - Helper Methods
 
 extension VpnContext {

@@ -42,9 +42,6 @@ internal final class VpnContext: @unchecked Sendable {
   /// Mainloop task handle
   nonisolated(unsafe) internal var mainloopTask: Task<Void, Never>?
 
-  /// Error captured during TUN setup callback
-  nonisolated(unsafe) internal var setupError: VpnError?
-
   // MARK: - Command Types
 
   internal enum Command: UInt8 {
@@ -114,7 +111,8 @@ internal final class VpnContext: @unchecked Sendable {
     // Register callback handlers
     openconnect_set_reconnected_handler(vpnInfo, reconnectedCallback)
     openconnect_set_stats_handler(vpnInfo, statsCallback)
-    openconnect_set_setup_tun_handler(vpnInfo, setupTunCallback)
+    // Note: TUN setup is done manually in connect() before starting mainloop,
+    // so we don't register a setup_tun handler here.
   }
 
   deinit {
@@ -126,9 +124,9 @@ internal final class VpnContext: @unchecked Sendable {
   /// Cleans up OpenConnect resources.
   ///
   /// This method is safe to call multiple times.
+  /// Note: The mainloop must be stopped via command pipe before calling this.
   internal func cleanup() {
-    // Cancel mainloop task if running
-    mainloopTask?.cancel()
+    // Clear task reference (mainloop should already be stopped via command pipe)
     mainloopTask = nil
 
     // Free OpenConnect resources
