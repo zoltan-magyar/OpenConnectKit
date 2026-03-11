@@ -1,0 +1,3 @@
+[submodule "Resources/vpnc-scripts"]
+	path = Resources/vpnc-scripts
+	url = https://gitlab.com/openconnect/vpnc-scripts.git

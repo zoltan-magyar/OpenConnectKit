@@ -143,7 +143,7 @@ extension VpnContext {
     }
 
     let commonPaths = [
-      "/opt/homebrew/etc/vpnc-scripts/vpnc-script",
+      "/opt/homebrew/etc/vpnc/vpnc-script",
       "/usr/local/etc/vpnc-scripts/vpnc-script",
       "/usr/share/vpnc-scripts/vpnc-script",
       "/etc/vpnc/vpnc-script",
