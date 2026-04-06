@@ -173,10 +173,11 @@ public class VpnSession {
     if case .disconnected = connectionStatus {
       return
     }
+    if case .disconnecting = connectionStatus {
+      return
+    }
 
     context?.disconnect()
-    context?.cleanup()
-    context = nil
   }
 
   /// Requests traffic statistics from the VPN connection.
@@ -267,5 +268,16 @@ public class VpnSession {
   /// - Parameter status: The new connection status
   internal func handleStatusChange(status: ConnectionStatus) {
     delegate?.vpnSession(self, didChangeStatus: status)
+  }
+
+  /// Releases the active context after its mainloop has fully stopped.
+  ///
+  /// - Parameter context: The context whose mainloop finished
+  internal func handleMainloopFinished(for context: VpnContext) {
+    guard self.context === context else {
+      return
+    }
+
+    self.context = nil
   }
 }

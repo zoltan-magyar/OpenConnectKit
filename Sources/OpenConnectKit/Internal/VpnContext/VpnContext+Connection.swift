@@ -94,10 +94,13 @@ extension VpnContext {
     if case .disconnected = connectionStatus {
       return
     }
+    if case .disconnecting = connectionStatus {
+      return
+    }
 
     stopMainloop()
 
-    updateStatus(.disconnected(error: nil))
+    updateStatus(.disconnecting)
   }
 
   /// Updates the connection status and notifies the session delegate.

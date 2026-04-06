@@ -11,8 +11,7 @@ import Foundation
 // MARK: - C Callback Entry Points
 
 // C callback for log messages. Called from C shim on mainloop thread.
-// Must be @_cdecl for C interop.
-@_cdecl("progressCallback")
+@c(progressCallback)
 internal func progressCallback(
   privdata: UnsafeMutableRawPointer?,
   level: CInt,

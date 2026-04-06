@@ -62,6 +62,13 @@ public enum ConnectionStatus: Equatable, Sendable {
   /// the connection is actively maintained.
   case connected
 
+  /// The VPN is in the process of disconnecting.
+  ///
+  /// A cancel command has been sent to the mainloop but it hasn't exited yet.
+  /// Cleanup and resource release happen after the mainloop returns, at which
+  /// point the status transitions to `.disconnected`.
+  case disconnecting
+
   /// The VPN is attempting to reconnect after a connection loss.
   ///
   /// This state indicates that the connection was lost (e.g., due to network
@@ -82,6 +89,8 @@ extension ConnectionStatus {
     case (.connecting(let lhsStage), .connecting(let rhsStage)):
       return lhsStage == rhsStage
     case (.connected, .connected):
+      return true
+    case (.disconnecting, .disconnecting):
       return true
     case (.reconnecting, .reconnecting):
       return true
