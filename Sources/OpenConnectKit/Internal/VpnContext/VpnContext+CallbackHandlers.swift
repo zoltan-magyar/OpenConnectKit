@@ -15,18 +15,18 @@ import Foundation
 internal func progressCallback(
   privdata: UnsafeMutableRawPointer?,
   level: CInt,
-  formatted_message: UnsafePointer<CChar>?
+  formattedMessage: UnsafePointer<CChar>?
 ) {
   guard
     let privdata = privdata,
-    let formatted_message = formatted_message
+    let formattedMessage = formattedMessage
   else {
     return
   }
 
   let context = VpnContext.extractContext(from: privdata)
 
-  var message = String(cString: formatted_message)
+  var message = String(cString: formattedMessage)
 
   // Strip trailing newline
   if message.hasSuffix("\n") {
