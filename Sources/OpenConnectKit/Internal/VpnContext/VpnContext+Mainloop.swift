@@ -11,17 +11,22 @@ import Foundation
 // MARK: - Mainloop Management
 
 extension VpnContext {
-  /// Starts the mainloop on a background task.
+  /// Starts the mainloop on a dedicated thread.
   ///
   /// The mainloop handles all VPN traffic and reconnection logic.
   /// It runs until cancelled or an error occurs.
+  ///
+  /// Uses a dedicated Thread instead of Task.detached because
+  /// openconnect_mainloop() blocks indefinitely and should not
+  /// consume a cooperative thread pool thread.
   internal func startMainloop() {
-    /// This probably should be a Thread, but I'm trying to experiment here, it most likely will be moved to the old Thread model later
-    mainloopTask = Task.detached { [self, session = self.session] in
-      withExtendedLifetime(session) {
-        runMainloop()
-      }
+    let thread = Thread { [self] in
+      self.runMainloop()
     }
+    thread.name = "OpenConnectKit.mainloop"
+    thread.qualityOfService = .userInitiated
+    mainloopThread = thread
+    thread.start()
   }
 
   /// Stops the mainloop by sending a cancel command.
@@ -34,12 +39,12 @@ extension VpnContext {
   /// Runs the mainloop until error or cancellation via command pipe.
   ///
   /// This method blocks the current thread while the mainloop is running.
-  /// It should only be called from a background task.
+  /// It should only be called from the dedicated mainloop thread.
   /// The mainloop exits when a cancel command is sent via the command pipe.
   private func runMainloop() {
     defer {
       cleanup()
-      session.handleMainloopFinished(for: self)
+      onMainloopFinished?()
     }
 
     guard let vpnInfo = vpnInfo else {
@@ -52,8 +57,8 @@ extension VpnContext {
       // This blocks until the connection ends or is cancelled via command pipe
       ret = openconnect_mainloop(
         vpnInfo,
-        session.configuration.reconnectTimeout,
-        session.configuration.reconnectInterval
+        configuration.reconnectTimeout,
+        configuration.reconnectInterval
       )
       if ret == 0 {
         if case .disconnecting = connectionStatus { break }
@@ -62,22 +67,14 @@ extension VpnContext {
     }
 
     // Determine the disconnect reason based on return value and current status
-    let error: VpnError?
     switch connectionStatus {
     case .disconnecting:
-      // User initiated disconnect - mainloop has now exited
-      error = nil
       updateStatus(.disconnected(error: nil))
     default:
-      // Unexpected disconnect - mainloop exited with error
-      if ret < 0 {
-        error = .connectionFailed(reason: "Connection lost")
-      } else {
-        // Normal exit (cancelled)
-        error = nil
-      }
+      let error: VpnError? = ret < 0
+        ? .connectionFailed(reason: "Connection lost")
+        : nil
       updateStatus(.disconnected(error: error))
     }
-
   }
 }
