@@ -8,17 +8,18 @@ let package = Package(
         .library(name: "OpenConnectKit", targets: ["OpenConnectKit"])
     ],
     targets: [
-        .systemLibrary(
-            name: "COpenConnectLib",
-            pkgConfig: "openconnect",
-            providers: [
-                .brew(["openconnect"]),
-                .apt(["libopenconnect-dev"]),
-            ]
+        .binaryTarget(
+            name: "OpenConnectC",
+            path: "Frameworks/OpenConnectC.xcframework"
         ),
         .target(
             name: "COpenConnect",
-            dependencies: ["COpenConnectLib"]
+            dependencies: ["OpenConnectC"],
+            linkerSettings: [
+                .linkedLibrary("xml2"),
+                .linkedLibrary("z"),
+                .linkedLibrary("iconv"),
+            ]
         ),
         .target(
             name: "OpenConnectKit",

@@ -8,6 +8,18 @@
 import COpenConnect
 import Foundation
 
+// MARK: - C Callback Result Codes
+
+private enum AuthFormResult {
+  static let ok: CInt = 0
+  static let cancelled: CInt = 1
+}
+
+private enum CertResult {
+  static let accept: CInt = 0
+  static let reject: CInt = 1
+}
+
 // MARK: - C Callback Entry Points
 
 // C callback for log messages. Called from C shim on mainloop thread.
@@ -46,27 +58,27 @@ internal func progressCallback(
   context.onLog?(logLevel, message)
 }
 
-/// C callback for certificate validation. Returns 0 to accept, 1 to reject.
+/// C callback for certificate validation.
 internal func validatePeerCertCallback(
   privdata: UnsafeMutableRawPointer?,
   reason: UnsafePointer<CChar>?
 ) -> CInt {
   guard let privdata = privdata else {
-    return 1
+    return CertResult.reject
   }
 
   let context = VpnContext.extractContext(from: privdata)
   let certInfo = CertificateInfo(from: reason)
 
   if let onCert = context.onCert {
-    return onCert(certInfo) ? 0 : 1
+    return onCert(certInfo) ? CertResult.accept : CertResult.reject
   }
 
   // No callback set — fall back to configuration setting
-  return context.configuration.allowInsecureCertificates ? 0 : 1
+  return context.configuration.allowInsecureCertificates ? CertResult.accept : CertResult.reject
 }
 
-/// C callback for authentication forms. Returns 0 for success, 1 for failure.
+/// C callback for authentication forms.
 internal func processAuthFormCallback(
   privdata: UnsafeMutableRawPointer?,
   form: UnsafeMutablePointer<oc_auth_form>?
@@ -75,7 +87,7 @@ internal func processAuthFormCallback(
     let privdata = privdata,
     let form = form
   else {
-    return 1
+    return AuthFormResult.cancelled
   }
 
   let context = VpnContext.extractContext(from: privdata)
@@ -83,13 +95,15 @@ internal func processAuthFormCallback(
   let authForm = AuthenticationForm(from: form)
 
   if let onAuth = context.onAuth {
-    let filledForm = onAuth(authForm)
+    guard let filledForm = onAuth(authForm) else {
+      return AuthFormResult.cancelled
+    }
     filledForm.apply(to: form)
-    return 0
+    return AuthFormResult.ok
   }
 
   // No callback set — return form unchanged (will likely fail auth)
-  return 0
+  return AuthFormResult.ok
 }
 
 /// C callback when reconnection succeeds. Updates status to .connected.

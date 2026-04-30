@@ -193,7 +193,7 @@ public final class VpnSession {
         if let self, let delegate = self.delegate {
           return await delegate.vpnSession(self, requiresAuthentication: form)
         }
-        return form
+        return nil
       }
     }
 
