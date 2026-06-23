@@ -8,13 +8,9 @@ let package = Package(
         .library(name: "OpenConnectKit", targets: ["OpenConnectKit"])
     ],
     targets: [
-        .systemLibrary(
+        .binaryTarget(
             name: "COpenConnectLib",
-            pkgConfig: "openconnect",
-            providers: [
-                .brew(["openconnect"]),
-                .apt(["libopenconnect-dev"]),
-            ]
+            path: "Frameworks/OpenConnectC.xcframework"
         ),
         .target(
             name: "COpenConnect",

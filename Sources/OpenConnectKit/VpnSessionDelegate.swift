@@ -20,8 +20,8 @@ import Foundation
 ///     func vpnSession(
 ///         _ session: VpnSession,
 ///         requiresAuthentication form: AuthenticationForm
-///     ) async -> AuthenticationForm {
-///         // Present auth sheet, wait for user to fill and submit
+///     ) async -> AuthenticationForm? {
+///         // Present auth sheet, wait for user to fill and submit, or nil to cancel
 ///         return await showAuthSheet(form)
 ///     }
 ///
@@ -39,17 +39,18 @@ public protocol VpnSessionDelegate: AnyObject {
 
   /// Called when the VPN server requires authentication.
   ///
-  /// The delegate should fill in the authentication form fields and return it.
+  /// The delegate should fill in the authentication form fields and return it,
+  /// or return `nil` to cancel the connection.
   /// This method is `async` to support presenting UI and awaiting user input.
   ///
   /// - Parameters:
   ///   - session: The VPN session requesting authentication
   ///   - form: The authentication form to fill
-  /// - Returns: The authentication form with filled field values
+  /// - Returns: The filled authentication form, or `nil` to cancel
   func vpnSession(
     _ session: VpnSession,
     requiresAuthentication form: AuthenticationForm
-  ) async -> AuthenticationForm
+  ) async -> AuthenticationForm?
 
   /// Called when the server's certificate needs validation.
   ///

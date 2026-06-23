@@ -83,13 +83,14 @@ internal func processAuthFormCallback(
   let authForm = AuthenticationForm(from: form)
 
   if let onAuth = context.onAuth {
-    let filledForm = onAuth(authForm)
+    guard let filledForm = onAuth(authForm) else {
+      return 1  // nil = user cancelled
+    }
     filledForm.apply(to: form)
     return 0
   }
 
-  // No callback set — return form unchanged (will likely fail auth)
-  return 0
+  return 1  // No callback set — cancel auth
 }
 
 /// C callback when reconnection succeeds. Updates status to .connected.

@@ -49,7 +49,8 @@ internal final class VpnContext: @unchecked Sendable {
   // MARK: - Closure Callbacks
 
   /// Called when authentication is required. Blocks the C thread until resolved.
-  nonisolated(unsafe) internal var onAuth: ((AuthenticationForm) -> AuthenticationForm)?
+  /// Returns nil to cancel the connection.
+  nonisolated(unsafe) internal var onAuth: ((AuthenticationForm) -> AuthenticationForm?)?
 
   /// Called when certificate validation is needed. Blocks the C thread until resolved.
   nonisolated(unsafe) internal var onCert: ((CertificateInfo) -> Bool)?
