@@ -17,6 +17,10 @@ import Foundation
 // This is a class (not actor) because C callbacks require synchronous access
 // to properties. The @unchecked Sendable conformance acknowledges that we're
 // managing thread safety manually through the C library's threading model.
+//
+// VpnContext is fully decoupled from VpnSession — it communicates via closures.
+// This allows VpnSession to be @MainActor-isolated while VpnContext runs on
+// background threads.
 internal final class VpnContext: @unchecked Sendable {
   // MARK: - Properties
 
@@ -29,8 +33,8 @@ internal final class VpnContext: @unchecked Sendable {
   /// OpenConnect vpninfo structure - managed by C library
   nonisolated(unsafe) internal var vpnInfo: OpaquePointer!
 
-  /// Reference to owning session - only read from callbacks, never mutated
-  nonisolated(unsafe) internal unowned let session: VpnSession
+  /// Stored configuration for access during connection and mainloop
+  internal let configuration: VpnConfiguration
 
   // Command pipe for controlling mainloop (OC_CMD_*)
   #if os(Windows)
@@ -39,8 +43,29 @@ internal final class VpnContext: @unchecked Sendable {
     nonisolated(unsafe) internal var cmdFd: Int32!
   #endif
 
-  /// Mainloop task handle
-  nonisolated(unsafe) internal var mainloopTask: Task<Void, Never>?
+  /// Mainloop thread handle
+  nonisolated(unsafe) internal var mainloopThread: Thread?
+
+  // MARK: - Closure Callbacks
+
+  /// Called when authentication is required. Blocks the C thread until resolved.
+  /// Returns nil to cancel the connection.
+  nonisolated(unsafe) internal var onAuth: ((AuthenticationForm) -> AuthenticationForm?)?
+
+  /// Called when certificate validation is needed. Blocks the C thread until resolved.
+  nonisolated(unsafe) internal var onCert: ((CertificateInfo) -> Bool)?
+
+  /// Called when a log message is received from the C library.
+  nonisolated(unsafe) internal var onLog: ((LogLevel, String) -> Void)?
+
+  /// Called when the connection status changes.
+  nonisolated(unsafe) internal var onStatus: ((ConnectionStatus) -> Void)?
+
+  /// Called when traffic statistics are received.
+  nonisolated(unsafe) internal var onStats: ((VpnStats) -> Void)?
+
+  /// Called when the mainloop finishes and context is cleaned up.
+  nonisolated(unsafe) internal var onMainloopFinished: (() -> Void)?
 
   // MARK: - Command Types
 
@@ -58,10 +83,10 @@ internal final class VpnContext: @unchecked Sendable {
   /// This initializes the OpenConnect library, parses the server URL, sets up
   /// the command pipe for mainloop control, and registers callback handlers.
   ///
-  /// - Parameter session: The VpnSession that owns this context
+  /// - Parameter configuration: The VPN configuration for this connection
   /// - Throws: `VpnError` if initialization fails
-  init(session: VpnSession) throws {
-    self.session = session
+  init(configuration: VpnConfiguration) throws {
+    self.configuration = configuration
 
     // Create OpenConnect vpninfo structure with callbacks
     // Pass VpnContext (self) as privdata since it manages the OpenConnect resources
@@ -81,10 +106,10 @@ internal final class VpnContext: @unchecked Sendable {
     self.vpnInfo = vpnInfo
 
     // Configure log level
-    openconnect_set_loglevel(vpnInfo, session.configuration.logLevel.openConnectLevel)
+    openconnect_set_loglevel(vpnInfo, configuration.logLevel.openConnectLevel)
 
     // Parse and validate server URL
-    let ret = openconnect_parse_url(vpnInfo, session.configuration.serverURL.absoluteString)
+    let ret = openconnect_parse_url(vpnInfo, configuration.serverURL.absoluteString)
     if ret != 0 {
       openconnect_vpninfo_free(vpnInfo)
       self.vpnInfo = nil
@@ -111,8 +136,6 @@ internal final class VpnContext: @unchecked Sendable {
     // Register callback handlers
     openconnect_set_reconnected_handler(vpnInfo, reconnectedCallback)
     openconnect_set_stats_handler(vpnInfo, statsCallback)
-    // Note: TUN setup is done manually in connect() before starting mainloop,
-    // so we don't register a setup_tun handler here.
   }
 
   deinit {
@@ -126,8 +149,8 @@ internal final class VpnContext: @unchecked Sendable {
   /// This method is safe to call multiple times.
   /// Note: The mainloop must be stopped via command pipe before calling this.
   internal func cleanup() {
-    // Clear task reference (mainloop should already be stopped via command pipe)
-    mainloopTask = nil
+    // Clear thread reference (mainloop should already be stopped via command pipe)
+    mainloopThread = nil
 
     // Free OpenConnect resources
     if vpnInfo != nil {

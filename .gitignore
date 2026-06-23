@@ -1,5 +1,7 @@
 .DS_Store
 /.build
+/.build-xcframework
+/Frameworks
 /Packages
 xcuserdata/
 DerivedData/

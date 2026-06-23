@@ -1,5 +1,5 @@
 module COpenConnectLib [system] {
-    header "COpenConnectLib.h"
+    header "openconnect.h"
     link "openconnect"
     export *
 }

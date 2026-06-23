@@ -11,10 +11,10 @@ import Foundation
 // MARK: - Connection Management
 
 extension VpnContext {
-  /// Connects to VPN: auth cookie → CSTP → DTLS → TUN setup → mainloop
+  /// Connects to VPN: auth cookie -> CSTP -> DTLS -> TUN setup -> mainloop
   ///
   /// This method blocks during the authentication, connection, and TUN setup phases.
-  /// The mainloop runs on a background task after setup completes.
+  /// The mainloop runs on a dedicated thread after setup completes.
   ///
   /// - Throws: `VpnError` if connection fails at any step
   func connect() throws {
@@ -72,7 +72,7 @@ extension VpnContext {
     }
 
     let vpncScriptPtr = vpncScriptPath.withCString { strdup($0) }
-    let interfaceNamePtr = session.configuration.interfaceName?.withCString { strdup($0) }
+    let interfaceNamePtr = configuration.interfaceName?.withCString { strdup($0) }
 
     defer {
       free(vpncScriptPtr)
@@ -103,11 +103,11 @@ extension VpnContext {
     updateStatus(.disconnecting)
   }
 
-  /// Updates the connection status and notifies the session delegate.
+  /// Updates the connection status and notifies via closure.
   ///
   /// - Parameter status: The new connection status
   internal func updateStatus(_ status: ConnectionStatus) {
     connectionStatus = status
-    session.handleStatusChange(status: status)
+    onStatus?(status)
   }
 }

@@ -43,7 +43,7 @@ internal func progressCallback(
   default: logLevel = .info
   }
 
-  context.session.handleProgress(level: logLevel, message: message)
+  context.onLog?(logLevel, message)
 }
 
 /// C callback for certificate validation. Returns 0 to accept, 1 to reject.
@@ -57,9 +57,13 @@ internal func validatePeerCertCallback(
 
   let context = VpnContext.extractContext(from: privdata)
   let certInfo = CertificateInfo(from: reason)
-  let accepted = context.session.handleCertificateValidation(certInfo: certInfo)
 
-  return accepted ? 0 : 1
+  if let onCert = context.onCert {
+    return onCert(certInfo) ? 0 : 1
+  }
+
+  // No callback set — fall back to configuration setting
+  return context.configuration.allowInsecureCertificates ? 0 : 1
 }
 
 /// C callback for authentication forms. Returns 0 for success, 1 for failure.
@@ -77,10 +81,16 @@ internal func processAuthFormCallback(
   let context = VpnContext.extractContext(from: privdata)
 
   let authForm = AuthenticationForm(from: form)
-  let filledForm = context.session.handleAuthenticationForm(authForm)
-  filledForm.apply(to: form)
 
-  return 0
+  if let onAuth = context.onAuth {
+    guard let filledForm = onAuth(authForm) else {
+      return 1  // nil = user cancelled
+    }
+    filledForm.apply(to: form)
+    return 0
+  }
+
+  return 1  // No callback set — cancel auth
 }
 
 /// C callback when reconnection succeeds. Updates status to .connected.
@@ -114,7 +124,7 @@ internal func statsCallback(
     rxBytes: stats.pointee.rx_bytes
   )
 
-  context.session.handleStats(vpnStats)
+  context.onStats?(vpnStats)
 }
 
 // MARK: - Helper Methods
@@ -134,7 +144,7 @@ extension VpnContext {
   ///
   /// - Returns: The path to the vpnc-script, or `nil` if not found
   internal func findVpncScript() -> String? {
-    if let configuredPath = session.configuration.vpncScript {
+    if let configuredPath = configuration.vpncScript {
       guard FileManager.default.isExecutableFile(atPath: configuredPath) else {
         return nil
       }
