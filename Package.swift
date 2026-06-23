@@ -1,6 +1,19 @@
 // swift-tools-version: 6.3
 import PackageDescription
 
+#if os(Linux)
+let cOpenConnectLib: Target = .systemLibrary(
+    name: "COpenConnectLib",
+    pkgConfig: "openconnect",
+    providers: [.apt(["libopenconnect-dev"])]
+)
+#else
+let cOpenConnectLib: Target = .binaryTarget(
+    name: "COpenConnectLib",
+    path: "Frameworks/OpenConnectC.xcframework"
+)
+#endif
+
 let package = Package(
     name: "OpenConnectKit",
     platforms: [.macOS(.v26)],
@@ -8,10 +21,7 @@ let package = Package(
         .library(name: "OpenConnectKit", targets: ["OpenConnectKit"])
     ],
     targets: [
-        .binaryTarget(
-            name: "COpenConnectLib",
-            path: "Frameworks/OpenConnectC.xcframework"
-        ),
+        cOpenConnectLib,
         .target(
             name: "COpenConnect",
             dependencies: ["COpenConnectLib"]

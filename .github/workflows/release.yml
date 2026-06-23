@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: macos-15
+
+    permissions:
+      contents: write
+
+    env:
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Validate tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$TAG" origin/main; then
+            echo "error: tag $TAG is not on main"
+            exit 1
+          fi
+
+      - name: Install build dependencies
+        run: brew install autoconf automake libtool pkg-config
+
+      - name: Build XCFramework
+        run: ./Scripts/build-xcframework.sh
+
+      - name: Package XCFramework
+        run: |
+          cd Frameworks
+          zip -r ../OpenConnectC.xcframework.zip OpenConnectC.xcframework
+
+      - name: Compute checksum
+        id: checksum
+        run: |
+          echo "value=$(swift package compute-checksum OpenConnectC.xcframework.zip)" >> $GITHUB_OUTPUT
+
+      - name: Update Package.swift
+        env:
+          CHECKSUM: ${{ steps.checksum.outputs.value }}
+        run: |
+          URL="https://github.com/${REPO}/releases/download/${TAG}/OpenConnectC.xcframework.zip"
+          python3 -c "
+          import re, sys
+          url, checksum = sys.argv[1], sys.argv[2]
+          with open('Package.swift') as f:
+              content = f.read()
+          content, n = re.subn(
+              r'\.binaryTarget\([^)]+\)',
+              f'.binaryTarget(\n    name: \"COpenConnectLib\",\n    url: \"{url}\",\n    checksum: \"{checksum}\"\n)',
+              content
+          )
+          if n != 1:
+              sys.exit(f'Expected 1 replacement, got {n}')
+          with open('Package.swift', 'w') as f:
+              f.write(content)
+          " "$URL" "$CHECKSUM"
+
+      - name: Commit and move tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+          git add Package.swift
+          git commit -m "Release $TAG"
+          git push origin HEAD:main
+          git tag -f "$TAG"
+          git push origin -f "$TAG"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            "OpenConnectC.xcframework.zip#OpenConnectC.xcframework.zip"

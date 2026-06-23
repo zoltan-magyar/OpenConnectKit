@@ -41,7 +41,7 @@ OPENSSL_REPO="https://github.com/openssl/openssl.git"
 OPENCONNECT_VERSION="${OPENCONNECT_VERSION:-v9.21}"
 OPENCONNECT_REPO="https://gitlab.com/openconnect/openconnect.git"
 
-DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-26.0}"
+DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-12.0}"
 NCPU="$(sysctl -n hw.logicalcpu)"
 SDK_PATH="$(xcrun --show-sdk-path)"
 
