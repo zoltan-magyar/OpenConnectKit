@@ -24,7 +24,12 @@ let package = Package(
         cOpenConnectLib,
         .target(
             name: "COpenConnect",
-            dependencies: ["COpenConnectLib"]
+            dependencies: ["COpenConnectLib"],
+            linkerSettings: [
+                .linkedLibrary("xml2"),
+                .linkedLibrary("z"),
+                .linkedLibrary("iconv"),
+            ]
         ),
         .target(
             name: "OpenConnectKit",
