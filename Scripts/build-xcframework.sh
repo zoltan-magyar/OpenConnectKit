@@ -90,21 +90,25 @@ fi
 
 step "Building OpenSSL for arm64"
 
-pushd "$OPENSSL_SRC" > /dev/null
+if [ -f "$OPENSSL_OUT/lib/libssl.a" ]; then
+    echo "  (cached, skipping build)"
+else
+    pushd "$OPENSSL_SRC" > /dev/null
 
-./Configure darwin64-arm64-cc \
-    no-shared \
-    no-tests \
-    no-apps \
-    "-mmacosx-version-min=$DEPLOYMENT_TARGET" \
-    "--prefix=$OPENSSL_OUT"
+    ./Configure darwin64-arm64-cc \
+        no-shared \
+        no-tests \
+        no-apps \
+        "-mmacosx-version-min=$DEPLOYMENT_TARGET" \
+        "--prefix=$OPENSSL_OUT"
 
-make -j"$NCPU"
-make install_sw   # installs libs/headers, skips man pages and docs
+    make -j"$NCPU"
+    make install_sw   # installs libs/headers, skips man pages and docs
 
-make distclean
+    make distclean
 
-popd > /dev/null
+    popd > /dev/null
+fi
 
 # ── openconnect ───────────────────────────────────────────────────────────────
 
@@ -116,53 +120,55 @@ else
     echo "  (already present, skipping clone)"
 fi
 
-step "Generating openconnect build system"
-
-pushd "$OC_SRC" > /dev/null
-
-./autogen.sh
-
-step "Configuring openconnect for arm64"
-
-# openconnect requires in-tree builds (out-of-tree is unreliable with its autotools setup)
-./configure \
-    --prefix="$OC_OUT" \
-    "--with-vpnc-script=$VPNC_SCRIPT" \
-    \
-    `# SSL library — use OpenSSL (built above), not GnuTLS` \
-    --without-gnutls \
-    --with-openssl \
-    \
-    `# Build as static library only — no shared dylib` \
-    --enable-static \
-    --disable-shared \
-    \
-    `# Optional features — disabled to minimise binary size and system dependencies.` \
-    `# Re-enable any of these if you need the corresponding VPN protocol or feature.` \
-    --without-stoken    `# RSA SecurID software tokens (requires libstoken)` \
-    --without-libpskc   `# OATH PSKC file support (requires libpskc >= 2.2.0)` \
-    --without-libpcsclite `# Smartcard / Yubikey support (requires libpcsclite)` \
-    --without-libproxy  `# Proxy auto-config PAC support (requires libproxy)` \
-    --without-lz4       `# LZ4 compression for DTLS (requires liblz4)` \
-    --without-gssapi    `# Kerberos/GSSAPI authentication` \
-    --disable-nls       `# Native language support / gettext translations` \
-    \
-    CC="$(xcrun -find clang)" \
-    CFLAGS="$ARM64_CFLAGS" \
-    "PKG_CONFIG_PATH=$OPENSSL_OUT/lib/pkgconfig"
-
 step "Building openconnect (library only)"
 
-# libopenconnect.la only — skips the openconnect CLI binary and tests
-make -j"$NCPU" libopenconnect.la
+if [ -f "$OC_OUT/lib/libopenconnect.a" ]; then
+    echo "  (cached, skipping build)"
+else
+    pushd "$OC_SRC" > /dev/null
 
-# libtool hides the real .a inside .libs/
-cp .libs/libopenconnect.a "$OC_OUT/lib/"
-cp openconnect.h "$OC_OUT/include/"
+    ./autogen.sh
 
-make distclean
+    step "Configuring openconnect for arm64"
 
-popd > /dev/null
+    # openconnect requires in-tree builds (out-of-tree is unreliable with its autotools setup)
+    ./configure \
+        --prefix="$OC_OUT" \
+        "--with-vpnc-script=$VPNC_SCRIPT" \
+        \
+        `# SSL library — use OpenSSL (built above), not GnuTLS` \
+        --without-gnutls \
+        --with-openssl \
+        \
+        `# Build as static library only — no shared dylib` \
+        --enable-static \
+        --disable-shared \
+        \
+        `# Optional features — disabled to minimise binary size and system dependencies.` \
+        `# Re-enable any of these if you need the corresponding VPN protocol or feature.` \
+        --without-stoken    `# RSA SecurID software tokens (requires libstoken)` \
+        --without-libpskc   `# OATH PSKC file support (requires libpskc >= 2.2.0)` \
+        --without-libpcsclite `# Smartcard / Yubikey support (requires libpcsclite)` \
+        --without-libproxy  `# Proxy auto-config PAC support (requires libproxy)` \
+        --without-lz4       `# LZ4 compression for DTLS (requires liblz4)` \
+        --without-gssapi    `# Kerberos/GSSAPI authentication` \
+        --disable-nls       `# Native language support / gettext translations` \
+        \
+        CC="$(xcrun -find clang)" \
+        CFLAGS="$ARM64_CFLAGS" \
+        "PKG_CONFIG_PATH=$OPENSSL_OUT/lib/pkgconfig"
+
+    # libopenconnect.la only — skips the openconnect CLI binary and tests
+    make -j"$NCPU" libopenconnect.la
+
+    # libtool hides the real .a inside .libs/
+    cp .libs/libopenconnect.a "$OC_OUT/lib/"
+    cp openconnect.h "$OC_OUT/include/"
+
+    make distclean
+
+    popd > /dev/null
+fi
 
 # ── Merge static libraries ────────────────────────────────────────────────────
 
