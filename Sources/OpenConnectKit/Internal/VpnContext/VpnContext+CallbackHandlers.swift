@@ -140,7 +140,7 @@ extension VpnContext {
 
   /// Finds the vpnc-script executable.
   ///
-  /// Uses the configured path if set, otherwise searches common locations.
+  /// Uses the configured path if explicitly set, otherwise uses the bundled script.
   ///
   /// - Returns: The path to the vpnc-script, or `nil` if not found
   internal func findVpncScript() -> String? {
@@ -151,20 +151,15 @@ extension VpnContext {
       return configuredPath
     }
 
-    let commonPaths = [
-      "/opt/homebrew/etc/vpnc/vpnc-script",
-      "/usr/local/etc/vpnc-scripts/vpnc-script",
-      "/usr/share/vpnc-scripts/vpnc-script",
-      "/etc/vpnc/vpnc-script",
-      "/usr/local/share/vpnc-scripts/vpnc-script",
-    ]
+    return bundledVpncScriptPath()
+  }
 
-    for path in commonPaths {
-      if FileManager.default.isExecutableFile(atPath: path) {
-        return path
-      }
+  private func bundledVpncScriptPath() -> String? {
+    guard let url = Bundle.module.url(forResource: "vpnc-script", withExtension: nil),
+      FileManager.default.isExecutableFile(atPath: url.path)
+    else {
+      return nil
     }
-
-    return nil
+    return url.path
   }
 }
