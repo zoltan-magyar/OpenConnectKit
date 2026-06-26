@@ -34,6 +34,12 @@ let package = Package(
         .target(
             name: "OpenConnectKit",
             dependencies: ["COpenConnect"],
+            exclude: [
+                "Resources/vpnc-scripts/netunshare.c",
+            ],
+            resources: [
+                .copy("Resources/vpnc-scripts/vpnc-script")
+            ],
             swiftSettings: [
                 .enableUpcomingFeature("NonisolatedNonsendingByDefault")
             ]

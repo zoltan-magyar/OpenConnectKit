@@ -41,21 +41,17 @@ public struct VpnConfiguration: Sendable {
 
   // MARK: - TUN Device Configuration
 
-  /// Path to the vpnc-script used to configure the network interface.
+  /// Path to a custom vpnc-script to use for network interface configuration.
   ///
-  /// If `nil`, the library will automatically search for vpnc-script in standard locations:
-  /// - macOS Homebrew: `/opt/homebrew/etc/vpnc-scripts/vpnc-script` or `/usr/local/etc/vpnc-scripts/vpnc-script`
-  /// - Linux: `/usr/share/vpnc-scripts/vpnc-script` or `/etc/vpnc/vpnc-script`
+  /// If `nil` (the default), the bundled vpnc-script is used automatically.
+  /// Only set this if you need to override the bundled script with a custom one.
   ///
   /// The vpnc-script handles network configuration tasks such as:
   /// - Setting up routes
   /// - Configuring DNS
   /// - Setting up the network interface
   ///
-  /// If you specify a path, ensure the script is executable. The connection will fail
-  /// if no valid script can be found.
-  ///
-  /// Default is `nil` (auto-detect from standard locations).
+  /// If you specify a path, ensure the script is executable.
   public var vpncScript: String?
 
   /// Name for the TUN/TAP network interface.

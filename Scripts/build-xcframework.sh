@@ -24,8 +24,6 @@ OC_OUT="$BUILD_DIR/openconnect-arm64"
 MERGED_OUT="$BUILD_DIR/merged"
 XCFRAMEWORK_OUT="$KIT_ROOT/Frameworks/OpenConnectC.xcframework"
 
-VPNC_SCRIPT="$KIT_ROOT/Resources/vpnc-scripts/vpnc-script"
-
 # ── Config ────────────────────────────────────────────────────────────────────
 # Override any of these via environment variables, e.g.:
 #   OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh
@@ -70,11 +68,6 @@ for tool in autoconf automake libtool pkg-config git xcodebuild xcrun; do
         exit 1
     fi
 done
-
-if [ ! -x "$VPNC_SCRIPT" ]; then
-    echo "error: vpnc-script not found or not executable at $VPNC_SCRIPT"
-    exit 1
-fi
 
 mkdir -p "$BUILD_DIR" "$OPENSSL_OUT" "$OC_OUT/lib" "$OC_OUT/include" "$MERGED_OUT/lib" "$MERGED_OUT/include"
 
@@ -134,7 +127,7 @@ else
     # openconnect requires in-tree builds (out-of-tree is unreliable with its autotools setup)
     ./configure \
         --prefix="$OC_OUT" \
-        "--with-vpnc-script=$VPNC_SCRIPT" \
+        --with-vpnc-script=none \
         \
         `# SSL library — use OpenSSL (built above), not GnuTLS` \
         --without-gnutls \
