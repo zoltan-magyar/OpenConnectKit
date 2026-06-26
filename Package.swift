@@ -10,7 +10,8 @@ let cOpenConnectLib: Target = .systemLibrary(
 #else
 let cOpenConnectLib: Target = .binaryTarget(
     name: "COpenConnectLib",
-    path: "Frameworks/OpenConnectC.xcframework"
+    url: "https://github.com/zoltan-magyar/OpenConnectKit/releases/download/v0.0.1/OpenConnectC.xcframework.zip",
+    checksum: "e977fdff5dc29b7afd31e2de2a13b3351b12feec0362e9453f65419d38d1af3c"
 )
 #endif
 
