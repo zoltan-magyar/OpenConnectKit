@@ -6,21 +6,40 @@ A Swift package that wraps the [OpenConnect](https://www.infradead.org/openconne
 
 - macOS 26+
 - Swift 6.3+
-- Homebrew: `brew install autoconf automake libtool pkg-config`
 
 ## Setup
 
-OpenConnectKit links against a static XCFramework bundling OpenConnect and OpenSSL. You must build it once before building the Swift package.
+OpenConnectKit links against a static XCFramework bundling OpenConnect and OpenSSL. On `main`, `Package.swift` points at the prebuilt XCFramework attached to the latest GitHub release, so you can add the package or build it directly:
 
-**1. Build the XCFramework:**
+```bash
+swift build
+```
+
+### Building the XCFramework locally
+
+Only needed if you're changing the C side or testing a different OpenConnect/OpenSSL version.
+
+**1. Install the build tools:**
+
+```bash
+brew install autoconf automake libtool pkg-config
+```
+
+**2. Build the XCFramework:**
 
 ```bash
 ./Scripts/build-xcframework.sh
 ```
 
-This clones OpenSSL 3.5.0 and OpenConnect v9.21, builds both for arm64, and packages everything into `Frameworks/OpenConnectC.xcframework`. Takes a few minutes on first run.
+This clones OpenSSL 3.5.0 and OpenConnect v9.21, builds both for arm64, and packages everything into `Frameworks/OpenConnectC.xcframework`. The first run takes a few minutes.
 
-**3. Build the Swift package:**
+**3. Point the package at the local build.** In `Package.swift`, replace the `url:` / `checksum:` arguments of the `COpenConnectLib` binary target with:
+
+```swift
+path: "Frameworks/OpenConnectC.xcframework"
+```
+
+**4. Build the Swift package:**
 
 ```bash
 swift build
