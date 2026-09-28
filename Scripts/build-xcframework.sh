@@ -25,23 +25,21 @@ MERGED_OUT="$BUILD_DIR/merged"
 XCFRAMEWORK_OUT="$KIT_ROOT/Frameworks/OpenConnectC.xcframework"
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Override any of these via environment variables, e.g.:
-#   OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh
+# Sources and versions are in xcframework.env (shared with the release
+# workflow). Override any of them via environment variables, e.g.:
+#   OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh --clean
 
-# OpenSSL release to build against. Find releases at:
-# https://github.com/openssl/openssl/releases
-OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.0}"
+source "$SCRIPT_DIR/xcframework.env"
 OPENSSL_TAG="openssl-$OPENSSL_VERSION"
-OPENSSL_REPO="https://github.com/openssl/openssl.git"
 
-# OpenConnect release to build. Find releases at:
-# https://gitlab.com/openconnect/openconnect/-/releases
-OPENCONNECT_VERSION="${OPENCONNECT_VERSION:-v9.21}"
-OPENCONNECT_REPO="https://gitlab.com/openconnect/openconnect.git"
-
-DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-12.0}"
+# Matches `platforms: [.macOS(.v26)]` in Package.swift.
+DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-26.0}"
 NCPU="$(sysctl -n hw.logicalcpu)"
-SDK_PATH="$(xcrun --show-sdk-path)"
+# Without --sdk, xcrun can resolve to the Command Line Tools SDK even when Xcode
+# is selected. Pin Xcode's macOS SDK; exporting SDKROOT makes every tool below
+# (cc in OpenSSL's build, clang, libtool) use it too.
+SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+export SDKROOT="$SDK_PATH"
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
 
@@ -73,19 +71,15 @@ mkdir -p "$BUILD_DIR" "$OPENSSL_OUT" "$OC_OUT/lib" "$OC_OUT/include" "$MERGED_OU
 
 # ── OpenSSL ───────────────────────────────────────────────────────────────────
 
-step "Fetching OpenSSL $OPENSSL_TAG"
-
-if [ ! -d "$OPENSSL_SRC" ]; then
-    git clone --depth 1 --branch "$OPENSSL_TAG" "$OPENSSL_REPO" "$OPENSSL_SRC"
-else
-    echo "  (already present, skipping clone)"
-fi
-
-step "Building OpenSSL for arm64"
+step "Building OpenSSL $OPENSSL_VERSION for arm64"
 
 if [ -f "$OPENSSL_OUT/lib/libssl.a" ]; then
     echo "  (cached, skipping build)"
 else
+    if [ ! -d "$OPENSSL_SRC" ]; then
+        git clone --depth 1 --branch "$OPENSSL_TAG" "$OPENSSL_REPO" "$OPENSSL_SRC"
+    fi
+
     pushd "$OPENSSL_SRC" > /dev/null
 
     ./Configure darwin64-arm64-cc \
@@ -105,19 +99,15 @@ fi
 
 # ── openconnect ───────────────────────────────────────────────────────────────
 
-step "Fetching OpenConnect $OPENCONNECT_VERSION"
-
-if [ ! -d "$OC_SRC" ]; then
-    git clone --depth 1 --branch "$OPENCONNECT_VERSION" "$OPENCONNECT_REPO" "$OC_SRC"
-else
-    echo "  (already present, skipping clone)"
-fi
-
-step "Building openconnect (library only)"
+step "Building openconnect $OPENCONNECT_VERSION (library only)"
 
 if [ -f "$OC_OUT/lib/libopenconnect.a" ]; then
     echo "  (cached, skipping build)"
 else
+    if [ ! -d "$OC_SRC" ]; then
+        git clone --depth 1 --branch "$OPENCONNECT_VERSION" "$OPENCONNECT_REPO" "$OC_SRC"
+    fi
+
     pushd "$OC_SRC" > /dev/null
 
     ./autogen.sh
@@ -147,8 +137,9 @@ else
         --without-gssapi    `# Kerberos/GSSAPI authentication` \
         --disable-nls       `# Native language support / gettext translations` \
         \
-        CC="$(xcrun -find clang)" \
-        CFLAGS="$ARM64_CFLAGS" \
+        `# Target flags go in CC, not CFLAGS: setting CFLAGS replaces configure's` \
+        `# default "-g -O2" (optimized, with debug info for the app's dSYM).` \
+        CC="$(xcrun -find clang) $ARM64_CFLAGS" \
         "PKG_CONFIG_PATH=$OPENSSL_OUT/lib/pkgconfig"
 
     # libopenconnect.la only — skips the openconnect CLI binary and tests
@@ -174,6 +165,7 @@ libtool -static \
     "$OPENSSL_OUT/lib/libcrypto.a"
 
 cp "$OC_OUT/include/openconnect.h" "$MERGED_OUT/include/"
+cp "$SCRIPT_DIR/COpenConnect.modulemap" "$MERGED_OUT/include/module.modulemap"
 
 # ── XCFramework ───────────────────────────────────────────────────────────────
 

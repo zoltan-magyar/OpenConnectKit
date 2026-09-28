@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request supersedes a running check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Lint and build
+    runs-on: xcode-27
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The package bundles vpnc-script from this submodule as a resource.
+          submodules: true
+
+      - name: Lint
+        run: xcrun swift-format lint --strict --recursive Package.swift Sources/
+
+      # Always builds the XCFramework from Scripts/, so changes there are tested
+      # before a release ships them. With warm caches this only repackages it.
+      - name: Build XCFramework
+        uses: ./.github/actions/build-xcframework
+
+      - name: Build package
+        run: swift build

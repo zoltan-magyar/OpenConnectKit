@@ -8,6 +8,17 @@
 import Foundation
 
 extension LogLevel {
+  // Convert from OpenConnect C log level (0-3); unknown levels map to info
+  internal init(openConnectLevel: CInt) {
+    switch openConnectLevel {
+    case 0: self = .error
+    case 1: self = .info
+    case 2: self = .debug
+    case 3: self = .trace
+    default: self = .info
+    }
+  }
+
   // Convert to OpenConnect C log level (0-3)
   internal var openConnectLevel: Int32 {
     switch self {

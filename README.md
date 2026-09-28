@@ -9,11 +9,13 @@ A Swift package that wraps the [OpenConnect](https://www.infradead.org/openconne
 
 ## Setup
 
-OpenConnectKit links against a static XCFramework bundling OpenConnect and OpenSSL. On `main`, `Package.swift` points at the prebuilt XCFramework attached to the latest GitHub release, so you can add the package or build it directly:
+OpenConnectKit links against a static XCFramework bundling OpenConnect and OpenSSL, imported in Swift as `COpenConnect`. On `main`, `Package.swift` points at the prebuilt XCFramework attached to the latest GitHub release, so you can add the package or build it directly:
 
 ```bash
 swift build
 ```
+
+It's macOS only. Linux was dropped along with the C shim: OpenConnectKit needs `openconnect_set_progress_msg_handler()` (openconnect API 5.10), which no distribution ships yet.
 
 ### Building the XCFramework locally
 
@@ -31,19 +33,27 @@ brew install autoconf automake libtool pkg-config
 ./Scripts/build-xcframework.sh
 ```
 
-This clones OpenSSL 3.5.0 and OpenConnect v9.21, builds both for arm64, and packages everything into `Frameworks/OpenConnectC.xcframework`. The first run takes a few minutes.
+This clones OpenSSL and OpenConnect, builds both for arm64, and packages everything into `Frameworks/OpenConnectC.xcframework`. The first run takes a few minutes.
 
-**3. Point the package at the local build.** In `Package.swift`, replace the `url:` / `checksum:` arguments of the `COpenConnectLib` binary target with:
+OpenConnect comes from the tag `swiftconnect-1` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`. The build switches back to upstream once a release includes it.
 
-```swift
-path: "Frameworks/OpenConnectC.xcframework"
-```
-
-**4. Build the Swift package:**
+**3. Build the Swift package:**
 
 ```bash
 swift build
 ```
+
+`Package.swift` uses `Frameworks/OpenConnectC.xcframework` whenever it exists, instead of the release. Delete `Frameworks/` to go back to the release.
+
+### Build configuration
+
+- `Scripts/xcframework.env`: OpenSSL and OpenConnect sources and versions, shared by the build script and the release workflow.
+- `Scripts/COpenConnect.modulemap`: copied into the XCFramework. It makes the headers importable as `COpenConnect` and declares the system libraries the static archive needs (`xml2`, `z`, `iconv`). Keep those in sync with the `./configure` flags in the build script.
+The module map is applied on every run. After changing a version or the compiler/`./configure` flags in the script, rebuild with `--clean`: the script reuses earlier OpenSSL and openconnect builds as long as they exist.
+
+### CI
+
+`.github/workflows/ci.yml` lints and builds every pull request and push to `main`. It always builds the XCFramework from `Scripts/` first (cached; the cache keys include the build recipe), so changes to the C build are tested before a release ships them. `release.yml` uses the same build steps from `.github/actions/build-xcframework`.
 
 ### Rebuilding the XCFramework
 
@@ -53,11 +63,12 @@ To rebuild from scratch (e.g. after updating the OpenConnect source or changing 
 ./Scripts/build-xcframework.sh --clean
 ```
 
-To build with different versions:
+To build other versions without editing `xcframework.env`:
 
 ```bash
 OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh --clean
-OPENCONNECT_VERSION=v9.22 ./Scripts/build-xcframework.sh --clean
+OPENCONNECT_VERSION=swiftconnect-2 ./Scripts/build-xcframework.sh --clean
+OPENCONNECT_REPO=https://gitlab.com/openconnect/openconnect.git OPENCONNECT_VERSION=v9.22 ./Scripts/build-xcframework.sh --clean
 ```
 
 ## Usage

@@ -1,20 +1,20 @@
 // swift-tools-version: 6.4
+import Foundation
 import PackageDescription
 
-#if os(Linux)
-  let cOpenConnectLib: Target = .systemLibrary(
-    name: "COpenConnectLib",
-    pkgConfig: "openconnect",
-    providers: [.apt(["libopenconnect-dev"])]
-  )
-#else
-  let cOpenConnectLib: Target = .binaryTarget(
-    name: "COpenConnectLib",
-    url:
-      "https://github.com/zoltan-magyar/OpenConnectKit/releases/download/v0.0.1/OpenConnectC.xcframework.zip",
-    checksum: "e977fdff5dc29b7afd31e2de2a13b3351b12feec0362e9453f65419d38d1af3c"
-  )
-#endif
+// The released XCFramework (openconnect + OpenSSL). The release workflow replaces
+// both values when it publishes a new version.
+let releaseURL =
+  "https://github.com/zoltan-magyar/OpenConnectKit/releases/download/v0.0.1/OpenConnectC.xcframework.zip"
+let releaseChecksum = "e977fdff5dc29b7afd31e2de2a13b3351b12feec0362e9453f65419d38d1af3c"
+
+// A local build from Scripts/build-xcframework.sh takes precedence over the release.
+// Frameworks/ is gitignored, so a checkout from Git always uses the release.
+let localXCFramework = "Frameworks/OpenConnectC.xcframework"
+let cOpenConnect: Target =
+  FileManager.default.fileExists(atPath: "\(Context.packageDirectory)/\(localXCFramework)")
+  ? .binaryTarget(name: "COpenConnect", path: localXCFramework)
+  : .binaryTarget(name: "COpenConnect", url: releaseURL, checksum: releaseChecksum)
 
 let package = Package(
   name: "OpenConnectKit",
@@ -23,16 +23,7 @@ let package = Package(
     .library(name: "OpenConnectKit", targets: ["OpenConnectKit"])
   ],
   targets: [
-    cOpenConnectLib,
-    .target(
-      name: "COpenConnect",
-      dependencies: ["COpenConnectLib"],
-      linkerSettings: [
-        .linkedLibrary("xml2"),
-        .linkedLibrary("z"),
-        .linkedLibrary("iconv"),
-      ]
-    ),
+    cOpenConnect,
     .target(
       name: "OpenConnectKit",
       dependencies: ["COpenConnect"],

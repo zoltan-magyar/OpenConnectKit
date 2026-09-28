@@ -10,40 +10,30 @@ import Foundation
 
 // MARK: - C Callback Entry Points
 
-// C callback for log messages. Called from C shim on mainloop thread.
-@c(progressCallback)
+/// C callback for log messages, already formatted by the library.
+/// Registered with `openconnect_set_progress_msg_handler()`.
 internal func progressCallback(
   privdata: UnsafeMutableRawPointer?,
   level: CInt,
-  formattedMessage: UnsafePointer<CChar>?
+  message: UnsafePointer<CChar>?
 ) {
   guard
     let privdata = privdata,
-    let formattedMessage = formattedMessage
+    let message = message
   else {
     return
   }
 
   let context = VpnContext.extractContext(from: privdata)
 
-  var message = String(cString: formattedMessage)
+  var text = String(cString: message)
 
   // Strip trailing newline
-  if message.hasSuffix("\n") {
-    message = String(message.dropLast())
+  if text.hasSuffix("\n") {
+    text = String(text.dropLast())
   }
 
-  // Convert C log level to Swift LogLevel
-  let logLevel: LogLevel
-  switch level {
-  case 0: logLevel = .error
-  case 1: logLevel = .info
-  case 2: logLevel = .debug
-  case 3: logLevel = .trace
-  default: logLevel = .info
-  }
-
-  context.onLog?(logLevel, message)
+  context.onLog?(LogLevel(openConnectLevel: level), text)
 }
 
 /// C callback for certificate validation. Returns 0 to accept, 1 to reject.

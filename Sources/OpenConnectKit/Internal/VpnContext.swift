@@ -8,10 +8,6 @@
 import COpenConnect
 import Foundation
 
-#if os(Windows)
-  import WinSDK
-#endif
-
 // Internal context managing OpenConnect C API
 //
 // This is a class (not actor) because C callbacks require synchronous access
@@ -37,11 +33,7 @@ internal final class VpnContext: @unchecked Sendable {
   internal let configuration: VpnConfiguration
 
   // Command pipe for controlling mainloop (OC_CMD_*)
-  #if os(Windows)
-    nonisolated(unsafe) internal var cmdFd: SOCKET!
-  #else
-    nonisolated(unsafe) internal var cmdFd: Int32!
-  #endif
+  nonisolated(unsafe) internal var cmdFd: Int32!
 
   /// Mainloop thread handle
   nonisolated(unsafe) internal var mainloopThread: Thread?
@@ -96,7 +88,7 @@ internal final class VpnContext: @unchecked Sendable {
         validatePeerCertCallback,
         nil,
         processAuthFormCallback,
-        get_progress_shim_callback(),
+        nil,  // variadic progress callback, which Swift can't implement; see below
         Unmanaged.passUnretained(self).toOpaque()
       )
     else {
@@ -104,6 +96,9 @@ internal final class VpnContext: @unchecked Sendable {
     }
 
     self.vpnInfo = vpnInfo
+
+    // Receives log messages already formatted. Set before anything can log.
+    openconnect_set_progress_msg_handler(vpnInfo, progressCallback)
 
     // Configure log level
     openconnect_set_loglevel(vpnInfo, configuration.logLevel.openConnectLevel)
@@ -118,19 +113,11 @@ internal final class VpnContext: @unchecked Sendable {
 
     // Set up command pipe for controlling the mainloop
     let cmdFdResult = openconnect_setup_cmd_pipe(vpnInfo)
-    #if os(Windows)
-      if cmdFdResult == INVALID_SOCKET {
-        openconnect_vpninfo_free(vpnInfo)
-        self.vpnInfo = nil
-        throw VpnError.cmdPipeSetupFailed
-      }
-    #else
-      if cmdFdResult < 0 {
-        openconnect_vpninfo_free(vpnInfo)
-        self.vpnInfo = nil
-        throw VpnError.cmdPipeSetupFailed
-      }
-    #endif
+    if cmdFdResult < 0 {
+      openconnect_vpninfo_free(vpnInfo)
+      self.vpnInfo = nil
+      throw VpnError.cmdPipeSetupFailed
+    }
     self.cmdFd = cmdFdResult
 
     // Register callback handlers
@@ -159,21 +146,13 @@ internal final class VpnContext: @unchecked Sendable {
     }
 
     // Reset command pipe
-    #if os(Windows)
-      cmdFd = INVALID_SOCKET
-    #else
-      cmdFd = -1
-    #endif
+    cmdFd = -1
   }
 
   // MARK: - Computed Properties
 
   internal var isCmdPipeReady: Bool {
-    #if os(Windows)
-      return cmdFd != nil && cmdFd != INVALID_SOCKET
-    #else
-      return cmdFd != nil && cmdFd >= 0
-    #endif
+    return cmdFd != nil && cmdFd >= 0
   }
 
   internal var assignedInterfaceName: String? {
