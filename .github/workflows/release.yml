@@ -46,16 +46,25 @@ jobs:
         run: |
           echo "value=$(swift package compute-checksum OpenConnectC.xcframework.zip)" >> $GITHUB_OUTPUT
 
-      # Upload the zip before Package.swift on main points to it. The release
-      # belongs to the tag name, so it stays attached when the tag moves below.
-      - name: Create GitHub Release
+      # The release starts as a draft and is only published at the end, after
+      # Package.swift and the tag are final: with immutable releases, publishing
+      # locks the release's files and its tag. The draft already holds the zip,
+      # so Package.swift on main never points at a file that was never uploaded.
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --generate-notes \
-            "OpenConnectC.xcframework.zip#OpenConnectC.xcframework.zip"
+          ASSET="OpenConnectC.xcframework.zip#OpenConnectC.xcframework.zip"
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
+            # Left over from a failed run: replace the zip with this build's.
+            gh release upload "$TAG" "$ASSET" --clobber
+          elif gh release view "$TAG" > /dev/null 2>&1; then
+            echo "error: release $TAG is already published. Create releases by pushing"
+            echo "a tag; this workflow writes the notes and publishes the release itself."
+            exit 1
+          else
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes "$ASSET"
+          fi
 
       - name: Update Package.swift
         env:
@@ -77,8 +86,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
-          git add Package.swift
-          git commit -m "Release $TAG"
+          # On a re-run the tag may already point at the release commit.
+          if ! git diff --quiet Package.swift; then
+            git add Package.swift
+            git commit -m "Release $TAG"
+          fi
           git push origin HEAD:main
           git tag -f "$TAG"
           git push origin -f "$TAG"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$TAG" --draft=false
