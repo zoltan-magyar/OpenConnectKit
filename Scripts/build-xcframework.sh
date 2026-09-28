@@ -32,9 +32,14 @@ XCFRAMEWORK_OUT="$KIT_ROOT/Frameworks/OpenConnectC.xcframework"
 source "$SCRIPT_DIR/xcframework.env"
 OPENSSL_TAG="openssl-$OPENSSL_VERSION"
 
-DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-12.0}"
+# Matches `platforms: [.macOS(.v26)]` in Package.swift.
+DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-26.0}"
 NCPU="$(sysctl -n hw.logicalcpu)"
-SDK_PATH="$(xcrun --show-sdk-path)"
+# Without --sdk, xcrun can resolve to the Command Line Tools SDK even when Xcode
+# is selected. Pin Xcode's macOS SDK; exporting SDKROOT makes every tool below
+# (cc in OpenSSL's build, clang, libtool) use it too.
+SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+export SDKROOT="$SDK_PATH"
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
 
@@ -66,19 +71,15 @@ mkdir -p "$BUILD_DIR" "$OPENSSL_OUT" "$OC_OUT/lib" "$OC_OUT/include" "$MERGED_OU
 
 # ── OpenSSL ───────────────────────────────────────────────────────────────────
 
-step "Fetching OpenSSL $OPENSSL_TAG"
-
-if [ ! -d "$OPENSSL_SRC" ]; then
-    git clone --depth 1 --branch "$OPENSSL_TAG" "$OPENSSL_REPO" "$OPENSSL_SRC"
-else
-    echo "  (already present, skipping clone)"
-fi
-
-step "Building OpenSSL for arm64"
+step "Building OpenSSL $OPENSSL_VERSION for arm64"
 
 if [ -f "$OPENSSL_OUT/lib/libssl.a" ]; then
     echo "  (cached, skipping build)"
 else
+    if [ ! -d "$OPENSSL_SRC" ]; then
+        git clone --depth 1 --branch "$OPENSSL_TAG" "$OPENSSL_REPO" "$OPENSSL_SRC"
+    fi
+
     pushd "$OPENSSL_SRC" > /dev/null
 
     ./Configure darwin64-arm64-cc \
@@ -98,19 +99,15 @@ fi
 
 # ── openconnect ───────────────────────────────────────────────────────────────
 
-step "Fetching OpenConnect $OPENCONNECT_VERSION"
-
-if [ ! -d "$OC_SRC" ]; then
-    git clone --depth 1 --branch "$OPENCONNECT_VERSION" "$OPENCONNECT_REPO" "$OC_SRC"
-else
-    echo "  (already present, skipping clone)"
-fi
-
-step "Building openconnect (library only)"
+step "Building openconnect $OPENCONNECT_VERSION (library only)"
 
 if [ -f "$OC_OUT/lib/libopenconnect.a" ]; then
     echo "  (cached, skipping build)"
 else
+    if [ ! -d "$OC_SRC" ]; then
+        git clone --depth 1 --branch "$OPENCONNECT_VERSION" "$OPENCONNECT_REPO" "$OC_SRC"
+    fi
+
     pushd "$OC_SRC" > /dev/null
 
     ./autogen.sh
@@ -140,8 +137,9 @@ else
         --without-gssapi    `# Kerberos/GSSAPI authentication` \
         --disable-nls       `# Native language support / gettext translations` \
         \
-        CC="$(xcrun -find clang)" \
-        CFLAGS="$ARM64_CFLAGS" \
+        `# Target flags go in CC, not CFLAGS: setting CFLAGS replaces configure's` \
+        `# default "-g -O2" (optimized, with debug info for the app's dSYM).` \
+        CC="$(xcrun -find clang) $ARM64_CFLAGS" \
         "PKG_CONFIG_PATH=$OPENSSL_OUT/lib/pkgconfig"
 
     # libopenconnect.la only — skips the openconnect CLI binary and tests

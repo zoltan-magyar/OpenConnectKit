@@ -49,6 +49,11 @@ swift build
 
 - `Scripts/xcframework.env`: OpenSSL and OpenConnect sources and versions, shared by the build script and the release workflow.
 - `Scripts/COpenConnect.modulemap`: copied into the XCFramework. It makes the headers importable as `COpenConnect` and declares the system libraries the static archive needs (`xml2`, `z`, `iconv`). Keep those in sync with the `./configure` flags in the build script.
+The module map is applied on every run. After changing a version or the compiler/`./configure` flags in the script, rebuild with `--clean`: the script reuses earlier OpenSSL and openconnect builds as long as they exist.
+
+### CI
+
+`.github/workflows/ci.yml` lints and builds every pull request and push to `main`. It always builds the XCFramework from `Scripts/` first (cached; the cache keys include the build recipe), so changes to the C build are tested before a release ships them. `release.yml` uses the same build steps from `.github/actions/build-xcframework`.
 
 ### Rebuilding the XCFramework
 
