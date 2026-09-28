@@ -221,7 +221,8 @@ public final class VpnSession {
   private func startStatsTimer() {
     stopStatsTimer()
 
-    let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "OpenConnectKit.statsPoller"))
+    let timer = DispatchSource.makeTimerSource(
+      queue: DispatchQueue(label: "OpenConnectKit.statsPoller"))
     timer.schedule(deadline: .now() + .seconds(5), repeating: .seconds(5))
     timer.setEventHandler { [weak self] in
       Task { @MainActor in

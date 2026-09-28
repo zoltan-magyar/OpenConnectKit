@@ -71,7 +71,8 @@ extension VpnContext {
     case .disconnecting:
       updateStatus(.disconnected(error: nil))
     default:
-      let error: VpnError? = ret < 0
+      let error: VpnError? =
+        ret < 0
         ? .connectionFailed(reason: "Connection lost")
         : nil
       updateStatus(.disconnected(error: error))

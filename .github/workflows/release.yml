@@ -8,7 +8,7 @@ on:
 jobs:
   release:
     name: Build and release
-    runs-on: macos-26
+    runs-on: xcode-27
 
     permissions:
       contents: write
@@ -75,7 +75,7 @@ jobs:
               content = f.read()
           content, n = re.subn(
               r'\.binaryTarget\([^)]+\)',
-              f'.binaryTarget(\n    name: \"COpenConnectLib\",\n    url: \"{url}\",\n    checksum: \"{checksum}\"\n)',
+              f'.binaryTarget(\n    name: \"COpenConnectLib\",\n    url:\n      \"{url}\",\n    checksum: \"{checksum}\"\n  )',
               content
           )
           if n != 1:

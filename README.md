@@ -5,7 +5,7 @@ A Swift package that wraps the [OpenConnect](https://www.infradead.org/openconne
 ## Requirements
 
 - macOS 26+
-- Swift 6.3+
+- Swift 6.4+ (Xcode 27)
 
 ## Setup
 

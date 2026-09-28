@@ -1,4 +1,0 @@
-module COpenConnect {
-    header "include/COpenConnect.h"
-    export *
-}
