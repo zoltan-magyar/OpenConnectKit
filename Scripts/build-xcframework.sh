@@ -25,19 +25,12 @@ MERGED_OUT="$BUILD_DIR/merged"
 XCFRAMEWORK_OUT="$KIT_ROOT/Frameworks/OpenConnectC.xcframework"
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Override any of these via environment variables, e.g.:
-#   OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh
+# Sources and versions are in xcframework.env (shared with the release
+# workflow). Override any of them via environment variables, e.g.:
+#   OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh --clean
 
-# OpenSSL release to build against. Find releases at:
-# https://github.com/openssl/openssl/releases
-OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.0}"
+source "$SCRIPT_DIR/xcframework.env"
 OPENSSL_TAG="openssl-$OPENSSL_VERSION"
-OPENSSL_REPO="https://github.com/openssl/openssl.git"
-
-# OpenConnect release to build. Find releases at:
-# https://gitlab.com/openconnect/openconnect/-/releases
-OPENCONNECT_VERSION="${OPENCONNECT_VERSION:-v9.21}"
-OPENCONNECT_REPO="https://gitlab.com/openconnect/openconnect.git"
 
 DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET:-12.0}"
 NCPU="$(sysctl -n hw.logicalcpu)"
@@ -174,6 +167,7 @@ libtool -static \
     "$OPENSSL_OUT/lib/libcrypto.a"
 
 cp "$OC_OUT/include/openconnect.h" "$MERGED_OUT/include/"
+cp "$SCRIPT_DIR/COpenConnect.modulemap" "$MERGED_OUT/include/module.modulemap"
 
 # ── XCFramework ───────────────────────────────────────────────────────────────
 
