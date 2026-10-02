@@ -154,16 +154,19 @@ public final class VpnSession {
   // MARK: - Internal Callback Wiring
 
   /// Wires all closure callbacks from VpnContext to VpnSession's observable state.
+  ///
+  /// The closures are stored on `context`, so they must not capture it strongly: the cycle
+  /// would keep the context alive, and `openconnect_vpninfo_free()` would never run.
   private func wireCallbacks(for context: VpnContext) {
     // Status changes → update observable property
-    context.onStatus = { [weak self] status in
+    context.onStatus = { [weak self, weak context] status in
       Task { @MainActor in
         guard let self else { return }
         self.status = status
 
         // Update interface name when connected
         if case .connected = status {
-          self.interfaceName = context.assignedInterfaceName
+          self.interfaceName = context?.assignedInterfaceName
         }
 
         // Clear stats and interface name on disconnect
@@ -198,12 +201,13 @@ public final class VpnSession {
     }
 
     // Cert validation → bridge to async delegate via semaphore
+    let allowInsecureCertificates = context.configuration.allowInsecureCertificates
     context.onCert = { [weak self] certInfo in
       blockForMainActor {
         if let self, let delegate = self.delegate {
           return await delegate.vpnSession(self, shouldAcceptCertificate: certInfo)
         }
-        return context.configuration.allowInsecureCertificates
+        return allowInsecureCertificates
       }
     }
 

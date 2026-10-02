@@ -56,7 +56,7 @@ internal func validatePeerCertCallback(
   return context.configuration.allowInsecureCertificates ? 0 : 1
 }
 
-/// C callback for authentication forms. Returns 0 for success, 1 for failure.
+/// C callback for authentication forms. Returns an `OC_FORM_RESULT_*` code.
 internal func processAuthFormCallback(
   privdata: UnsafeMutableRawPointer?,
   form: UnsafeMutablePointer<oc_auth_form>?
@@ -65,7 +65,7 @@ internal func processAuthFormCallback(
     let privdata = privdata,
     let form = form
   else {
-    return 1
+    return OC_FORM_RESULT_ERR
   }
 
   let context = VpnContext.extractContext(from: privdata)
@@ -74,13 +74,12 @@ internal func processAuthFormCallback(
 
   if let onAuth = context.onAuth {
     guard let filledForm = onAuth(authForm) else {
-      return 1  // nil = user cancelled
+      return OC_FORM_RESULT_CANCELLED  // nil = user cancelled
     }
-    filledForm.apply(to: form)
-    return 0
+    return filledForm.apply(to: form) ? OC_FORM_RESULT_OK : OC_FORM_RESULT_ERR
   }
 
-  return 1  // No callback set — cancel auth
+  return OC_FORM_RESULT_CANCELLED  // No callback set — cancel auth
 }
 
 /// C callback when reconnection succeeds. Updates status to .connected.

@@ -41,8 +41,10 @@ extension VpnContext {
     updateStatus(.connecting(stage: "Setting up DTLS"))
     ret = openconnect_setup_dtls(vpnInfo, 60)
     if ret != 0 {
-      updateStatus(.disconnected(error: .dtlsSetupFailed))
-      throw VpnError.dtlsSetupFailed
+      // Not fatal: the server may not offer DTLS at all ("No DTLS address"). Like openconnect's
+      // own client, carry on over TLS, and disable DTLS so reconnects don't keep retrying it.
+      openconnect_disable_dtls(vpnInfo)
+      onLog?(.info, "DTLS unavailable, using TLS only")
     }
 
     // Set up TUN device before starting mainloop
