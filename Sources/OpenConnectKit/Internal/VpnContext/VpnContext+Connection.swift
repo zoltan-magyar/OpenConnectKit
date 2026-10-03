@@ -11,49 +11,64 @@ import Foundation
 // MARK: - Connection Management
 
 extension VpnContext {
-  /// Connects to VPN: auth cookie -> CSTP -> DTLS -> TUN setup -> mainloop
+  /// Starts the connection on its own thread. Progress and the outcome arrive as `events`.
   ///
-  /// This method blocks during the authentication, connection, and TUN setup phases.
-  /// The mainloop runs on a dedicated thread after setup completes.
-  ///
-  /// - Throws: `VpnError` if connection fails at any step
-  func connect() throws {
-    guard case .disconnected = connectionStatus else {
+  /// Call it once. The thread keeps the context alive until the connection has ended.
+  func start() {
+    let thread = Thread { [self] in
+      run()
+    }
+    thread.name = "OpenConnectKit.connection"
+    thread.qualityOfService = .userInitiated
+    thread.start()
+  }
+
+  /// The connection thread: connects, then runs the mainloop until the connection ends.
+  private func run() {
+    let events = callbacks.events
+    defer { events.finish() }
+
+    do {
+      try establish()
+    } catch {
+      events.yield(.finished(isCancelled ? .cancelled : error))
       return
     }
 
-    updateStatus(.connecting(stage: "Initializing connection"))
+    let interfaceName = openconnect_get_ifname(vpnInfo).map { String(cString: $0) }
+    events.yield(.established(interfaceName: interfaceName))
+    events.yield(.finished(runMainloop()))
+  }
 
-    updateStatus(.connecting(stage: "Authenticating..."))
-    var ret = openconnect_obtain_cookie(vpnInfo)
-    if ret != 0 {
-      updateStatus(.disconnected(error: .cookieObtainFailed))
-      throw VpnError.cookieObtainFailed
+  /// Connects to VPN: auth cookie -> CSTP -> DTLS -> TUN setup
+  ///
+  /// Blocks for the whole sequence, including while an auth form waits for the user.
+  ///
+  /// - Throws: `VpnError` if a step fails
+  private func establish() throws(VpnError) {
+    // cancel() may have been called before the thread started.
+    if isCancelled { throw .cancelled }
+
+    stage("Authenticating...")
+    guard openconnect_obtain_cookie(vpnInfo) == 0 else {
+      throw .cookieObtainFailed
     }
 
-    updateStatus(.connecting(stage: "Establishing CSTP connection"))
-    ret = openconnect_make_cstp_connection(vpnInfo)
-    if ret != 0 {
-      updateStatus(.disconnected(error: .cstpConnectionFailed))
-      throw VpnError.cstpConnectionFailed
+    stage("Establishing CSTP connection")
+    guard openconnect_make_cstp_connection(vpnInfo) == 0 else {
+      throw .cstpConnectionFailed
     }
 
-    updateStatus(.connecting(stage: "Setting up DTLS"))
-    ret = openconnect_setup_dtls(vpnInfo, 60)
-    if ret != 0 {
+    stage("Setting up DTLS")
+    if openconnect_setup_dtls(vpnInfo, 60) != 0 {
       // Not fatal: the server may not offer DTLS at all ("No DTLS address"). Like openconnect's
       // own client, carry on over TLS, and disable DTLS so reconnects don't keep retrying it.
       openconnect_disable_dtls(vpnInfo)
-      onLog?(.info, "DTLS unavailable, using TLS only")
+      callbacks.handlers.log(.info, "DTLS unavailable, using TLS only")
     }
 
-    // Set up TUN device before starting mainloop
-    // This allows synchronous error handling rather than relying on callbacks
-    updateStatus(.connecting(stage: "Configuring tunnel"))
+    stage("Configuring tunnel")
     try setupTunDevice()
-
-    updateStatus(.connected)
-    startMainloop()
   }
 
   /// Sets up the TUN device for the VPN connection.
@@ -62,54 +77,20 @@ extension VpnContext {
   /// Must be called after DTLS setup and before starting the mainloop.
   ///
   /// - Throws: `VpnError` if TUN setup fails
-  private func setupTunDevice() throws {
+  private func setupTunDevice() throws(VpnError) {
     guard let vpncScriptPath = findVpncScript() else {
-      updateStatus(.disconnected(error: .vpncScriptFailed))
-      throw VpnError.vpncScriptFailed
+      throw .vpncScriptFailed
     }
 
-    guard let vpnInfo = vpnInfo else {
-      updateStatus(.disconnected(error: .notInitialized))
-      throw VpnError.notInitialized
-    }
-
-    let vpncScriptPtr = vpncScriptPath.withCString { strdup($0) }
-    let interfaceNamePtr = configuration.interfaceName?.withCString { strdup($0) }
-
-    defer {
-      free(vpncScriptPtr)
-      free(interfaceNamePtr)
-    }
-
-    let ret = openconnect_setup_tun_device(vpnInfo, vpncScriptPtr, interfaceNamePtr)
-    if ret != 0 {
-      updateStatus(.disconnected(error: .tunSetupFailed))
-      throw VpnError.tunSetupFailed
+    // openconnect copies both strings, so Swift's temporary C strings are enough.
+    guard
+      openconnect_setup_tun_device(vpnInfo, vpncScriptPath, configuration.interfaceName) == 0
+    else {
+      throw .tunSetupFailed
     }
   }
 
-  /// Disconnects from the VPN.
-  ///
-  /// This method sends a cancel command to the mainloop and updates status.
-  /// The actual cleanup happens when the mainloop exits.
-  func disconnect() {
-    if case .disconnected = connectionStatus {
-      return
-    }
-    if case .disconnecting = connectionStatus {
-      return
-    }
-
-    stopMainloop()
-
-    updateStatus(.disconnecting)
-  }
-
-  /// Updates the connection status and notifies via closure.
-  ///
-  /// - Parameter status: The new connection status
-  internal func updateStatus(_ status: ConnectionStatus) {
-    connectionStatus = status
-    onStatus?(status)
+  private func stage(_ description: String) {
+    callbacks.events.yield(.stage(description))
   }
 }

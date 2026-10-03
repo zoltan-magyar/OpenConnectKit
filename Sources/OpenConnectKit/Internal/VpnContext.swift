@@ -7,81 +7,121 @@
 
 import COpenConnect
 import Foundation
+import Synchronization
 
-// Internal context managing OpenConnect C API
+// Owns one openconnect connection (`vpninfo`) for its whole life.
 //
-// This is a class (not actor) because C callbacks require synchronous access
-// to properties. The @unchecked Sendable conformance acknowledges that we're
-// managing thread safety manually through the C library's threading model.
+// Everything that touches `vpninfo` runs on one dedicated thread, started by `start()`:
+// authentication, CSTP, DTLS, TUN setup and then the mainloop. openconnect isn't thread-safe;
+// the only channel it supports from other threads is the command pipe, so `cancel()` and
+// `requestStats()` are the only calls other threads make. The thread reports back through
+// `events`, in order.
 //
-// VpnContext is fully decoupled from VpnSession — it communicates via closures.
-// This allows VpnSession to be @MainActor-isolated while VpnContext runs on
-// background threads.
-internal final class VpnContext: @unchecked Sendable {
-  // MARK: - Properties
+// It's a thread and not `Task.detached` because every one of those calls blocks: on network
+// I/O, for as long as the user takes to fill in an auth form, and in the mainloop for the
+// whole session. Swift's cooperative thread pool expects its threads never to block.
+//
+// `vpnInfo` is freed in `deinit`, which can only run once both the owner (VpnSession) and the
+// connection thread have let go, so nothing can be using it any more.
+final class VpnContext: Sendable {
+  // MARK: - Types
 
-  // Properties accessed from C callbacks must be nonisolated(unsafe)
-  // Thread safety is managed by OpenConnect's internal threading model
+  /// What the connection thread reports, in order.
+  enum Event: Sendable {
+    /// A connection step started; a human-readable description.
+    case stage(String)
 
-  /// Connection status - accessed from callbacks and mainloop
-  nonisolated(unsafe) internal var connectionStatus: ConnectionStatus = .disconnected(error: nil)
+    /// The tunnel is up and the mainloop is starting.
+    case established(interfaceName: String?)
 
-  /// OpenConnect vpninfo structure - managed by C library
-  nonisolated(unsafe) internal var vpnInfo: OpaquePointer!
+    /// openconnect re-established the connection after losing it.
+    case reconnected
 
-  /// Stored configuration for access during connection and mainloop
-  internal let configuration: VpnConfiguration
+    /// Traffic statistics, in reply to `requestStats()`.
+    case stats(VpnStats)
 
-  // Command pipe for controlling mainloop (OC_CMD_*)
-  nonisolated(unsafe) internal var cmdFd: Int32!
+    /// The connection ended. `nil` if it ended because of `cancel()`; `.cancelled` if it was
+    /// cancelled before it was established. Always the last event.
+    case finished(VpnError?)
+  }
 
-  /// Mainloop thread handle
-  nonisolated(unsafe) internal var mainloopThread: Thread?
+  /// What the C callbacks hand over to the owner. Called on the connection thread.
+  struct Handlers: Sendable {
+    /// Blocks until the form is filled in. Returning `nil` cancels the connection.
+    var authenticate: @Sendable (AuthenticationForm) -> AuthenticationForm?
 
-  // MARK: - Closure Callbacks
+    /// Blocks until a decision is made. Returning `true` accepts the certificate.
+    var validateCertificate: @Sendable (CertificateInfo) -> Bool
 
-  /// Called when authentication is required. Blocks the C thread until resolved.
-  /// Returns nil to cancel the connection.
-  nonisolated(unsafe) internal var onAuth: ((AuthenticationForm) -> AuthenticationForm?)?
+    /// Receives every log message. Called often, so it shouldn't block.
+    var log: @Sendable (LogLevel, String) -> Void
+  }
 
-  /// Called when certificate validation is needed. Blocks the C thread until resolved.
-  nonisolated(unsafe) internal var onCert: ((CertificateInfo) -> Bool)?
+  /// What the C callbacks reach through their `privdata` pointer.
+  ///
+  /// It's a separate object so it can exist before `openconnect_vpninfo_new()` is called,
+  /// which needs the pointer; that is what lets `vpnInfo` be a `let`. VpnContext keeps it alive
+  /// for as long as `vpnInfo` exists.
+  final class Callbacks: Sendable {
+    let handlers: Handlers
+    let events: AsyncStream<Event>.Continuation
 
-  /// Called when a log message is received from the C library.
-  nonisolated(unsafe) internal var onLog: ((LogLevel, String) -> Void)?
+    /// Set by `cancel()`, and when the auth handler cancels. Read on the connection thread to
+    /// tell a cancellation apart from a failure.
+    private let cancelled = Atomic<Bool>(false)
 
-  /// Called when the connection status changes.
-  nonisolated(unsafe) internal var onStatus: ((ConnectionStatus) -> Void)?
+    init(handlers: Handlers, events: AsyncStream<Event>.Continuation) {
+      self.handlers = handlers
+      self.events = events
+    }
 
-  /// Called when traffic statistics are received.
-  nonisolated(unsafe) internal var onStats: ((VpnStats) -> Void)?
+    var isCancelled: Bool {
+      cancelled.load(ordering: .sequentiallyConsistent)
+    }
 
-  /// Called when the mainloop finishes and context is cleaned up.
-  nonisolated(unsafe) internal var onMainloopFinished: (() -> Void)?
+    func markCancelled() {
+      cancelled.store(true, ordering: .sequentiallyConsistent)
+    }
 
-  // MARK: - Command Types
+    /// Recovers the object from a C callback's `privdata`.
+    static func from(_ privdata: UnsafeMutableRawPointer) -> Callbacks {
+      Unmanaged<Callbacks>.fromOpaque(privdata).takeUnretainedValue()
+    }
+  }
 
-  internal enum Command: UInt8 {
+  enum Command: UInt8 {
+    // openconnect.h defines these as character literals ('x', ...), which Swift doesn't import.
     case cancel = 0x78  // 'x'
     case pause = 0x70  // 'p'
     case detach = 0x64  // 'd'
     case stats = 0x73  // 's'
   }
 
+  // MARK: - Properties
+
+  let configuration: VpnConfiguration
+
+  /// Progress and the outcome of the connection. Finishes after `.finished`.
+  let events: AsyncStream<Event>
+
+  let callbacks: Callbacks
+
+  /// openconnect's connection state. Only the connection thread uses it, apart from `init` and
+  /// `deinit`, which can't overlap with that thread.
+  nonisolated(unsafe) let vpnInfo: OpaquePointer
+
+  /// Write end of openconnect's command pipe (`OC_CMD_*` bytes). Safe to write from any thread.
+  let commandPipe: Int32
+
   // MARK: - Initialization
 
-  /// Creates a VPN context.
+  /// Creates the openconnect state for a connection. Nothing connects until `start()`.
   ///
-  /// This initializes the OpenConnect library, parses the server URL, sets up
-  /// the command pipe for mainloop control, and registers callback handlers.
-  ///
-  /// - Parameter configuration: The VPN configuration for this connection
-  /// - Throws: `VpnError` if initialization fails
-  init(configuration: VpnConfiguration) throws {
-    self.configuration = configuration
+  /// - Throws: `VpnError` if openconnect can't be set up, or the server URL is invalid.
+  init(configuration: VpnConfiguration, handlers: Handlers) throws(VpnError) {
+    let (events, continuation) = AsyncStream.makeStream(of: Event.self)
+    let callbacks = Callbacks(handlers: handlers, events: continuation)
 
-    // Create OpenConnect vpninfo structure with callbacks
-    // Pass VpnContext (self) as privdata since it manages the OpenConnect resources
     guard
       let vpnInfo = openconnect_vpninfo_new(
         "AnyConnect Compatible OpenConnectKit Client",
@@ -89,81 +129,47 @@ internal final class VpnContext: @unchecked Sendable {
         nil,
         processAuthFormCallback,
         nil,  // variadic progress callback, which Swift can't implement; see below
-        Unmanaged.passUnretained(self).toOpaque()
+        Unmanaged.passUnretained(callbacks).toOpaque()
       )
     else {
-      throw VpnError.notInitialized
+      throw .notInitialized
     }
-
-    self.vpnInfo = vpnInfo
 
     // Receives log messages already formatted. Set before anything can log.
     openconnect_set_progress_msg_handler(vpnInfo, progressCallback)
-
-    // Configure log level
     openconnect_set_loglevel(vpnInfo, configuration.logLevel.openConnectLevel)
 
-    // Parse and validate server URL
-    let ret = openconnect_parse_url(vpnInfo, configuration.serverURL.absoluteString)
-    if ret != 0 {
+    guard openconnect_parse_url(vpnInfo, configuration.serverURL.absoluteString) == 0 else {
       openconnect_vpninfo_free(vpnInfo)
-      self.vpnInfo = nil
-      throw VpnError.invalidConfiguration(reason: "Failed to parse server URL")
+      throw .invalidConfiguration(reason: "Failed to parse server URL")
     }
 
-    // Set up command pipe for controlling the mainloop
-    let cmdFdResult = openconnect_setup_cmd_pipe(vpnInfo)
-    if cmdFdResult < 0 {
+    let commandPipe = openconnect_setup_cmd_pipe(vpnInfo)
+    guard commandPipe >= 0 else {
       openconnect_vpninfo_free(vpnInfo)
-      self.vpnInfo = nil
-      throw VpnError.cmdPipeSetupFailed
+      throw .cmdPipeSetupFailed
     }
-    self.cmdFd = cmdFdResult
 
-    // Register callback handlers
     openconnect_set_reconnected_handler(vpnInfo, reconnectedCallback)
     openconnect_set_stats_handler(vpnInfo, statsCallback)
+
+    self.configuration = configuration
+    self.events = events
+    self.callbacks = callbacks
+    self.vpnInfo = vpnInfo
+    self.commandPipe = commandPipe
   }
 
   deinit {
-    cleanup()
-  }
-
-  // MARK: - Cleanup
-
-  /// Cleans up OpenConnect resources.
-  ///
-  /// This method is safe to call multiple times.
-  /// Note: The mainloop must be stopped via command pipe before calling this.
-  internal func cleanup() {
-    // Clear thread reference (mainloop should already be stopped via command pipe)
-    mainloopThread = nil
-
-    // Free OpenConnect resources
-    if vpnInfo != nil {
-      openconnect_vpninfo_free(vpnInfo)
-      vpnInfo = nil
-    }
-
-    // Reset command pipe
-    cmdFd = -1
+    // Also closes both ends of the command pipe.
+    openconnect_vpninfo_free(vpnInfo)
+    callbacks.events.finish()
   }
 
   // MARK: - Computed Properties
 
-  internal var isCmdPipeReady: Bool {
-    return cmdFd != nil && cmdFd >= 0
-  }
-
-  internal var assignedInterfaceName: String? {
-    guard let vpnInfo = vpnInfo else {
-      return nil
-    }
-
-    guard let ifnamePtr = openconnect_get_ifname(vpnInfo) else {
-      return nil
-    }
-
-    return String(cString: ifnamePtr)
+  /// Whether the connection was cancelled, by `cancel()` or from the auth form.
+  var isCancelled: Bool {
+    callbacks.isCancelled
   }
 }

@@ -16,7 +16,7 @@ import Foundation
 /// ## Example Usage
 ///
 /// ```swift
-/// switch session.connectionStatus {
+/// switch session.status {
 /// case .disconnected(let error):
 ///     if let error = error {
 ///         print("Disconnected due to error: \(error)")
@@ -27,6 +27,8 @@ import Foundation
 ///     print("Connecting: \(stage)")
 /// case .connected:
 ///     print("Connected successfully")
+/// case .disconnecting:
+///     print("Disconnecting...")
 /// case .reconnecting:
 ///     print("Attempting to reconnect...")
 /// }
@@ -74,6 +76,10 @@ public enum ConnectionStatus: Equatable, Sendable {
   /// This state indicates that the connection was lost (e.g., due to network
   /// interruption) and OpenConnect is automatically attempting to re-establish
   /// the connection. This is different from the initial connection process.
+  ///
+  /// - Note: Not reported yet. openconnect reconnects inside its mainloop and only says so once
+  ///   a reconnect has succeeded, so until it can also report the start of one, the status
+  ///   stays `.connected` during an outage.
   case reconnecting
 
 }

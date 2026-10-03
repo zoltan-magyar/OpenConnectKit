@@ -88,6 +88,8 @@ let config = VpnConfiguration(
 try await session.connect(configuration: config)
 ```
 
-`VpnSession` is `@Observable` — bind `session.status`, `session.stats`, and `session.interfaceName` directly in SwiftUI. Consume logs via `session.logs` (an `AsyncStream<LogEntry>`).
+`VpnSession` is `@Observable` — bind `session.status`, `session.stats`, and `session.interfaceName` directly in SwiftUI. Consume logs via `session.logs` (an `AsyncStream<LogEntry>`; each access returns a new stream, so several readers can follow along).
+
+`connect` returns once the tunnel is up. Cancelling the task that called it, or calling `disconnect()`, cancels a connection attempt; `connect` then throws `VpnError.cancelled`.
 
 See `VpnSessionDelegate` for handling authentication prompts and certificate validation.

@@ -9,6 +9,9 @@ import COpenConnect
 import Foundation
 
 // MARK: - C Callback Entry Points
+//
+// openconnect calls all of these on the connection thread, with the VpnContext.Callbacks object
+// passed to openconnect_vpninfo_new() as privdata.
 
 /// C callback for log messages, already formatted by the library.
 /// Registered with `openconnect_set_progress_msg_handler()`.
@@ -24,7 +27,7 @@ internal func progressCallback(
     return
   }
 
-  let context = VpnContext.extractContext(from: privdata)
+  let callbacks = VpnContext.Callbacks.from(privdata)
 
   var text = String(cString: message)
 
@@ -33,7 +36,7 @@ internal func progressCallback(
     text = String(text.dropLast())
   }
 
-  context.onLog?(LogLevel(openConnectLevel: level), text)
+  callbacks.handlers.log(LogLevel(openConnectLevel: level), text)
 }
 
 /// C callback for certificate validation. Returns 0 to accept, 1 to reject.
@@ -45,15 +48,10 @@ internal func validatePeerCertCallback(
     return 1
   }
 
-  let context = VpnContext.extractContext(from: privdata)
+  let callbacks = VpnContext.Callbacks.from(privdata)
   let certInfo = CertificateInfo(from: reason)
 
-  if let onCert = context.onCert {
-    return onCert(certInfo) ? 0 : 1
-  }
-
-  // No callback set — fall back to configuration setting
-  return context.configuration.allowInsecureCertificates ? 0 : 1
+  return callbacks.handlers.validateCertificate(certInfo) ? 0 : 1
 }
 
 /// C callback for authentication forms. Returns an `OC_FORM_RESULT_*` code.
@@ -68,28 +66,25 @@ internal func processAuthFormCallback(
     return OC_FORM_RESULT_ERR
   }
 
-  let context = VpnContext.extractContext(from: privdata)
+  let callbacks = VpnContext.Callbacks.from(privdata)
 
   let authForm = AuthenticationForm(from: form)
 
-  if let onAuth = context.onAuth {
-    guard let filledForm = onAuth(authForm) else {
-      return OC_FORM_RESULT_CANCELLED  // nil = user cancelled
-    }
-    return filledForm.apply(to: form) ? OC_FORM_RESULT_OK : OC_FORM_RESULT_ERR
+  guard let filledForm = callbacks.handlers.authenticate(authForm) else {
+    // nil = user cancelled. Recorded so the failed cookie request reads as a cancellation.
+    callbacks.markCancelled()
+    return OC_FORM_RESULT_CANCELLED
   }
-
-  return OC_FORM_RESULT_CANCELLED  // No callback set — cancel auth
+  return filledForm.apply(to: form) ? OC_FORM_RESULT_OK : OC_FORM_RESULT_ERR
 }
 
-/// C callback when reconnection succeeds. Updates status to .connected.
+/// C callback when reconnection succeeds.
 internal func reconnectedCallback(privdata: UnsafeMutableRawPointer?) {
   guard let privdata = privdata else {
     return
   }
 
-  let context = VpnContext.extractContext(from: privdata)
-  context.updateStatus(.connected)
+  VpnContext.Callbacks.from(privdata).events.yield(.reconnected)
 }
 
 /// C callback for traffic statistics. Triggered by requestStats() command.
@@ -104,8 +99,6 @@ internal func statsCallback(
     return
   }
 
-  let context = VpnContext.extractContext(from: privdata)
-
   let vpnStats = VpnStats(
     txPackets: stats.pointee.tx_pkts,
     txBytes: stats.pointee.tx_bytes,
@@ -113,20 +106,12 @@ internal func statsCallback(
     rxBytes: stats.pointee.rx_bytes
   )
 
-  context.onStats?(vpnStats)
+  VpnContext.Callbacks.from(privdata).events.yield(.stats(vpnStats))
 }
 
 // MARK: - Helper Methods
 
 extension VpnContext {
-  /// Extracts the VpnContext from a C callback privdata pointer.
-  ///
-  /// - Parameter privdata: The opaque pointer passed to C callbacks
-  /// - Returns: The VpnContext instance
-  static func extractContext(from privdata: UnsafeMutableRawPointer) -> VpnContext {
-    return Unmanaged<VpnContext>.fromOpaque(privdata).takeUnretainedValue()
-  }
-
   /// Finds the vpnc-script executable.
   ///
   /// Uses the configured path if explicitly set, otherwise uses the bundled script.

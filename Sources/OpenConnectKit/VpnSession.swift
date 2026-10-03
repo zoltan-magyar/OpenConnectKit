@@ -41,7 +41,8 @@ public final class VpnSession {
   /// The current connection status of the VPN session.
   public private(set) var status: ConnectionStatus = .disconnected(error: nil)
 
-  /// The most recent traffic statistics, or `nil` if not yet available.
+  /// The most recent traffic statistics of the current or last connection, or `nil` before the
+  /// first statistics of a connection arrive.
   public private(set) var stats: VpnStats?
 
   /// The name of the network interface assigned to the VPN tunnel.
@@ -51,7 +52,12 @@ public final class VpnSession {
 
   // MARK: - Log Stream
 
-  /// An async stream of log entries from the VPN session.
+  /// Log entries from the VPN session, from the moment you start reading.
+  ///
+  /// Each access returns a new, independent stream, so several readers can follow the logs at
+  /// once, and a SwiftUI `.task` that restarts simply gets a fresh stream. Entries that arrive
+  /// while nobody is reading aren't kept. A reader that falls far behind loses the oldest
+  /// entries first.
   ///
   /// Consume in a `.task` modifier:
   /// ```swift
@@ -61,26 +67,35 @@ public final class VpnSession {
   ///     }
   /// }
   /// ```
-  @ObservationIgnored
-  public let logs: AsyncStream<LogEntry>
+  public var logs: AsyncStream<LogEntry> {
+    logBroadcaster.makeStream()
+  }
 
   // MARK: - Delegate
 
   /// The delegate for handling authentication and certificate validation.
+  @ObservationIgnored
   public weak var delegate: VpnSessionDelegate?
 
   // MARK: - Internal Properties
 
-  /// Internal context managing the OpenConnect connection.
+  /// The connection in progress, from `connect` until it has ended.
+  @ObservationIgnored
   private var context: VpnContext?
 
-  /// Continuation for the log async stream.
+  /// Resumes `connect` once the connection is established or has failed.
   @ObservationIgnored
-  private let logContinuation: AsyncStream<LogEntry>.Continuation
+  private var connectContinuation: CheckedContinuation<Void, any Error>?
 
-  /// Timer for periodic stats requests while connected.
+  /// Applies the context's events, in order, to the observable state.
   @ObservationIgnored
-  private var statsTimer: DispatchSourceTimer?
+  private var eventTask: Task<Void, Never>?
+
+  /// Requests stats periodically while connected.
+  @ObservationIgnored
+  private var statsTask: Task<Void, Never>?
+
+  private let logBroadcaster = LogBroadcaster()
 
   // MARK: - Initialization
 
@@ -88,15 +103,15 @@ public final class VpnSession {
   ///
   /// - Parameter delegate: The delegate to handle authentication and certificate validation
   public init(delegate: VpnSessionDelegate) {
-    let (stream, continuation) = AsyncStream<LogEntry>.makeStream()
-    self.logs = stream
-    self.logContinuation = continuation
     self.delegate = delegate
   }
 
-  deinit {
-    statsTimer?.cancel()
-    logContinuation.finish()
+  isolated deinit {
+    // Without this the connection thread would keep the tunnel up, with nothing left to stop it.
+    context?.cancel()
+    eventTask?.cancel()
+    statsTask?.cancel()
+    logBroadcaster.finish()
   }
 
   // MARK: - Public Methods
@@ -106,141 +121,162 @@ public final class VpnSession {
   /// This method performs the following steps:
   /// 1. Obtains an authentication cookie (may trigger delegate authentication)
   /// 2. Establishes the CSTP connection
-  /// 3. Sets up DTLS for the data channel
+  /// 3. Sets up DTLS for the data channel (falling back to TLS if that fails)
   /// 4. Configures the TUN device
-  /// 5. Starts the mainloop on a dedicated thread
+  /// 5. Starts the mainloop
   ///
-  /// The `status` property is updated throughout the connection process.
+  /// It returns once the tunnel is up. The `status` property is updated throughout, and it is
+  /// `.connecting` as soon as this method is called.
+  ///
+  /// Cancelling the calling task cancels the connection attempt, as does `disconnect()`. An auth
+  /// form or certificate prompt that is waiting for the user still has to be answered first.
   ///
   /// - Parameter configuration: The VPN configuration for this connection
-  /// - Throws: `VpnError` if connection fails at any step
+  /// - Throws: `VpnError` if connection fails at any step, `VpnError.cancelled` if it was
+  ///   cancelled, `VpnError.alreadyConnected` if the session isn't disconnected
   public func connect(configuration: VpnConfiguration) async throws {
     guard case .disconnected = status else {
       throw VpnError.alreadyConnected
     }
 
-    let context = try VpnContext(configuration: configuration)
-    self.context = context
+    // Set before the first suspension, so a second call can't get past the guard above.
+    status = .connecting(stage: "Initializing connection")
+    stats = nil
 
-    // Wire up closure callbacks
-    wireCallbacks(for: context)
-
-    // Run the blocking connect sequence off MainActor
+    let context: VpnContext
     do {
-      try await Task.detached {
-        try context.connect()
-      }.value
+      context = try VpnContext(configuration: configuration, handlers: makeHandlers(configuration))
     } catch {
-      self.context = nil
+      status = .disconnected(error: error)
       throw error
     }
+    self.context = context
 
-    // Connection succeeded — start periodic stats polling
-    startStatsTimer()
+    let events = context.events
+    eventTask = Task(name: "OpenConnectKit.events") { [weak self] in
+      for await event in events {
+        self?.handle(event)
+      }
+    }
+
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        connectContinuation = continuation
+        context.start()
+      }
+    } onCancel: {
+      context.cancel()
+    }
   }
 
   /// Disconnects from the VPN server.
   ///
-  /// This method gracefully shuts down the VPN connection and cleans up
-  /// resources. The `status` property will transition to `.disconnected`.
+  /// The status changes to `.disconnecting` right away, and to `.disconnected` once the
+  /// connection has been shut down. While connecting, this cancels the attempt, and `connect`
+  /// throws `VpnError.cancelled`.
   ///
   /// This method is safe to call multiple times.
   public func disconnect() {
-    if case .disconnected = status { return }
-    if case .disconnecting = status { return }
-    context?.disconnect()
+    switch status {
+    case .disconnected, .disconnecting:
+      return
+    case .connecting, .connected, .reconnecting:
+      status = .disconnecting
+      context?.cancel()
+    }
   }
 
-  // MARK: - Internal Callback Wiring
+  // MARK: - Events
 
-  /// Wires all closure callbacks from VpnContext to VpnSession's observable state.
+  /// Applies an event from the connection thread to the observable state.
   ///
-  /// The closures are stored on `context`, so they must not capture it strongly: the cycle
-  /// would keep the context alive, and `openconnect_vpninfo_free()` would never run.
-  private func wireCallbacks(for context: VpnContext) {
-    // Status changes → update observable property
-    context.onStatus = { [weak self, weak context] status in
-      Task { @MainActor in
-        guard let self else { return }
-        self.status = status
-
-        // Update interface name when connected
-        if case .connected = status {
-          self.interfaceName = context?.assignedInterfaceName
-        }
-
-        // Clear stats and interface name on disconnect
-        if case .disconnected = status {
-          self.interfaceName = nil
-          self.stopStatsTimer()
-        }
+  /// This is the only place, besides `connect` and `disconnect`, that changes `status`.
+  private func handle(_ event: VpnContext.Event) {
+    switch event {
+    case .stage(let stage):
+      // After disconnect(), the status stays .disconnecting until the connection has ended.
+      if case .connecting = status {
+        status = .connecting(stage: stage)
       }
-    }
 
-    // Stats → update observable property
-    context.onStats = { [weak self] stats in
-      Task { @MainActor in
-        self?.stats = stats
+    case .established(let interfaceName):
+      // If disconnect() was called meanwhile, wait for .finished.
+      guard case .connecting = status else { return }
+      status = .connected
+      self.interfaceName = interfaceName
+      startStatsPolling()
+      connectContinuation?.resume()
+      connectContinuation = nil
+
+    case .reconnected:
+      if case .reconnecting = status {
+        status = .connected
       }
-    }
 
-    // Log messages → emit to async stream
-    context.onLog = { [weak self] level, message in
-      let entry = LogEntry(level: level, message: message)
-      self?.logContinuation.yield(entry)
-    }
+    case .stats(let stats):
+      self.stats = stats
 
-    // Auth form → bridge to async delegate via semaphore
-    context.onAuth = { [weak self] form in
-      blockForMainActor {
-        if let self, let delegate = self.delegate {
+    case .finished(let error):
+      statsTask?.cancel()
+      statsTask = nil
+      eventTask = nil
+      context = nil
+      interfaceName = nil
+      // A cancellation isn't an error from the user's point of view; connect() still throws it.
+      if case .cancelled? = error {
+        status = .disconnected(error: nil)
+      } else {
+        status = .disconnected(error: error)
+      }
+      connectContinuation?.resume(throwing: error ?? VpnError.cancelled)
+      connectContinuation = nil
+    }
+  }
+
+  // MARK: - Context Handlers
+
+  /// The handlers the context calls on its connection thread.
+  private func makeHandlers(_ configuration: VpnConfiguration) -> VpnContext.Handlers {
+    let allowInsecureCertificates = configuration.allowInsecureCertificates
+    let logBroadcaster = logBroadcaster
+
+    return VpnContext.Handlers(
+      // Auth form → bridge to async delegate via semaphore
+      authenticate: { [weak self] form in
+        blockForMainActor {
+          guard let self, let delegate = self.delegate else { return nil }
           return await delegate.vpnSession(self, requiresAuthentication: form)
         }
-        return nil
-      }
-    }
-
-    // Cert validation → bridge to async delegate via semaphore
-    let allowInsecureCertificates = context.configuration.allowInsecureCertificates
-    context.onCert = { [weak self] certInfo in
-      blockForMainActor {
-        if let self, let delegate = self.delegate {
+      },
+      // Cert validation → bridge to async delegate via semaphore
+      validateCertificate: { [weak self] certInfo in
+        blockForMainActor {
+          guard let self, let delegate = self.delegate else { return allowInsecureCertificates }
           return await delegate.vpnSession(self, shouldAcceptCertificate: certInfo)
         }
-        return allowInsecureCertificates
+      },
+      // Log messages → every `logs` stream, straight from the connection thread
+      log: { level, message in
+        logBroadcaster.yield(LogEntry(level: level, message: message))
       }
-    }
-
-    // Mainloop finished → clean up context reference
-    context.onMainloopFinished = { [weak self] in
-      Task { @MainActor in
-        self?.context = nil
-      }
-    }
+    )
   }
 
-  // MARK: - Stats Timer
+  // MARK: - Stats Polling
 
-  /// Starts periodic stats polling every 5 seconds while connected.
-  private func startStatsTimer() {
-    stopStatsTimer()
-
-    let timer = DispatchSource.makeTimerSource(
-      queue: DispatchQueue(label: "OpenConnectKit.statsPoller"))
-    timer.schedule(deadline: .now() + .seconds(5), repeating: .seconds(5))
-    timer.setEventHandler { [weak self] in
-      Task { @MainActor in
+  /// Requests stats every 5 seconds until the connection ends.
+  private func startStatsPolling() {
+    statsTask?.cancel()
+    statsTask = Task(name: "OpenConnectKit.stats") { [weak self] in
+      while true {
+        do {
+          try await Task.sleep(for: .seconds(5))
+        } catch {
+          return  // cancelled
+        }
         self?.context?.requestStats()
       }
     }
-    timer.resume()
-    statsTimer = timer
-  }
-
-  /// Stops the periodic stats timer.
-  private func stopStatsTimer() {
-    statsTimer?.cancel()
-    statsTimer = nil
   }
 }
 
@@ -250,9 +286,13 @@ public final class VpnSession {
 /// The C library requires a synchronous return value, but the delegate
 /// method is async (e.g., awaiting user input in a sheet).
 ///
+/// A continuation wouldn't do: it suspends a task, while openconnect needs the thread it called
+/// in on to wait. That thread is the context's own connection thread, never one of Swift's
+/// cooperative pool, so blocking it is fine.
+///
 /// - Parameter work: The async work to perform on MainActor
 /// - Returns: The result of the work
-private func blockForMainActor<T>(
+private func blockForMainActor<T: Sendable>(
   _ work: @MainActor @escaping () async -> T
 ) -> T {
   let semaphore = DispatchSemaphore(value: 0)

@@ -11,71 +11,34 @@ import Foundation
 // MARK: - Mainloop Management
 
 extension VpnContext {
-  /// Starts the mainloop on a dedicated thread.
+  /// Runs openconnect's mainloop on the connection thread until the connection ends.
   ///
-  /// The mainloop handles all VPN traffic and reconnection logic.
-  /// It runs until cancelled or an error occurs.
+  /// The mainloop handles all VPN traffic, and reconnects by itself when the connection drops,
+  /// for up to `reconnectTimeout`. Each successful reconnect calls `reconnectedCallback`; there
+  /// is no callback for when a reconnect starts.
   ///
-  /// Uses a dedicated Thread instead of Task.detached because
-  /// openconnect_mainloop() blocks indefinitely and should not
-  /// consume a cooperative thread pool thread.
-  internal func startMainloop() {
-    let thread = Thread { [self] in
-      self.runMainloop()
-    }
-    thread.name = "OpenConnectKit.mainloop"
-    thread.qualityOfService = .userInitiated
-    mainloopThread = thread
-    thread.start()
-  }
-
-  /// Stops the mainloop by sending a cancel command.
-  ///
-  /// The mainloop will exit gracefully after processing the cancel command.
-  internal func stopMainloop() {
-    sendCommand(.cancel)
-  }
-
-  /// Runs the mainloop until error or cancellation via command pipe.
-  ///
-  /// This method blocks the current thread while the mainloop is running.
-  /// It should only be called from the dedicated mainloop thread.
-  /// The mainloop exits when a cancel command is sent via the command pipe.
-  private func runMainloop() {
-    defer {
-      cleanup()
-      onMainloopFinished?()
-    }
-
-    guard let vpnInfo = vpnInfo else {
-      updateStatus(.disconnected(error: .notInitialized))
-      return
-    }
-    var ret: Int32 = 0
-    while ret == 0 {
-      // Run the OpenConnect mainloop
-      // This blocks until the connection ends or is cancelled via command pipe
+  /// - Returns: Why the connection ended, or `nil` if it ended because of `cancel()`.
+  func runMainloop() -> VpnError? {
+    var ret: CInt
+    repeat {
+      // Returns 0 only after OC_CMD_PAUSE, which asks to be called again. We never pause, but
+      // honour it anyway.
       ret = openconnect_mainloop(
         vpnInfo,
         configuration.reconnectTimeout,
         configuration.reconnectInterval
       )
-      if ret == 0 {
-        if case .disconnecting = connectionStatus { break }
-        updateStatus(.reconnecting)
-      }
-    }
+    } while ret == 0
 
-    // Determine the disconnect reason based on return value and current status
-    switch connectionStatus {
-    case .disconnecting:
-      updateStatus(.disconnected(error: nil))
+    if isCancelled { return nil }
+
+    switch -ret {
+    case EINTR, ECONNABORTED:  // OC_CMD_CANCEL, OC_CMD_DETACH
+      return nil
+    case EPERM:  // e.g. "Cookie is no longer valid" when reconnecting
+      return .connectionFailed(reason: "The VPN session expired or was ended by the server")
     default:
-      let error: VpnError? =
-        ret < 0
-        ? .connectionFailed(reason: "Connection lost")
-        : nil
-      updateStatus(.disconnected(error: error))
+      return .connectionFailed(reason: "Connection lost (\(String(cString: strerror(-ret))))")
     }
   }
 }
