@@ -1,5 +1,5 @@
 //
-//  VpnSession.swift
+//  VPNSession.swift
 //  OpenConnectKit
 //
 //  Main public API for VPN sessions
@@ -9,17 +9,20 @@ import Foundation
 
 /// Manages VPN connections using the OpenConnect protocol.
 ///
-/// `VpnSession` provides a SwiftUI-friendly, observable API for establishing
+/// `VPNSession` provides a SwiftUI-friendly, observable API for establishing
 /// and managing OpenConnect VPN connections. All C interop is handled internally,
 /// exposing a clean, type-safe interface.
 ///
 /// ## SwiftUI Usage
 ///
 /// ```swift
-/// @State private var session: VpnSession
+/// @State private var prompts: VPNPrompts
+/// @State private var session: VPNSession
 ///
-/// init(handler: MyVpnHandler) {
-///     self.session = VpnSession(delegate: handler)
+/// init() {
+///     let prompts = VPNPrompts()
+///     _prompts = State(initialValue: prompts)
+///     _session = State(initialValue: VPNSession(delegate: prompts))
 /// }
 ///
 /// var body: some View {
@@ -27,28 +30,34 @@ import Foundation
 ///         Text("Status: \(session.status)")
 ///         Button("Connect") {
 ///             Task {
-///                 try await session.connect(configuration: config)
+///                 try await session.connect(using: config)
 ///             }
 ///         }
 ///     }
+///     .sheet(item: $prompts.pendingAuthentication) { prompt in
+///         LoginForm(prompt.form) { prompts.submit($0) }
+///     }
 /// }
 /// ```
+///
+/// See `VPNPrompts` for the certificate prompt, and `VPNSessionDelegate` to answer prompts
+/// some other way.
 @Observable
 @MainActor
-public final class VpnSession {
+public final class VPNSession {
   // MARK: - Observable State
 
-  /// The current connection status of the VPN session.
-  public private(set) var status: ConnectionStatus = .disconnected(error: nil)
+  /// The current connection status of the VPN session. While connected, it carries the
+  /// connection's details, such as the tunnel's interface name.
+  public private(set) var status: ConnectionStatus = .disconnected
+
+  /// Why the last connection attempt or connection failed, or `nil` if it ended normally or was
+  /// cancelled. Cleared when `connect` is called.
+  public private(set) var lastError: VPNError?
 
   /// The most recent traffic statistics of the current or last connection, or `nil` before the
   /// first statistics of a connection arrive.
-  public private(set) var stats: VpnStats?
-
-  /// The name of the network interface assigned to the VPN tunnel.
-  ///
-  /// Available only when status is `.connected`.
-  public private(set) var interfaceName: String?
+  public private(set) var stats: VPNStats?
 
   // MARK: - Log Stream
 
@@ -73,19 +82,22 @@ public final class VpnSession {
 
   // MARK: - Delegate
 
-  /// The delegate for handling authentication and certificate validation.
-  @ObservationIgnored
-  public weak var delegate: VpnSessionDelegate?
+  /// Answers the authentication and certificate prompts. The session keeps it alive.
+  public let delegate: any VPNSessionDelegate
 
   // MARK: - Internal Properties
 
   /// The connection in progress, from `connect` until it has ended.
   @ObservationIgnored
-  private var context: VpnContext?
+  private var context: VPNContext?
 
   /// Resumes `connect` once the connection is established or has failed.
   @ObservationIgnored
-  private var connectContinuation: CheckedContinuation<Void, any Error>?
+  private var connectContinuation: CheckedContinuation<Result<Void, VPNError>, Never>?
+
+  /// Resume the `disconnect()` calls that are waiting for the connection to end.
+  @ObservationIgnored
+  private var disconnectContinuations: [CheckedContinuation<Void, Never>] = []
 
   /// Applies the context's lifecycle, in order, to the observable state.
   @ObservationIgnored
@@ -95,14 +107,22 @@ public final class VpnSession {
   @ObservationIgnored
   private var statsTask: Task<Void, Never>?
 
+  /// Cancels the delegate call that's waiting for an answer, if there is one.
+  @ObservationIgnored
+  private var cancelPendingPrompt: (() -> Void)?
+
   private let logBroadcaster = LogBroadcaster()
 
   // MARK: - Initialization
 
   /// Creates a new VPN session with a delegate for interactive events.
   ///
+  /// The session keeps a strong reference to the delegate, so a delegate created right here,
+  /// like `VPNSession(delegate: VPNPrompts())`, stays alive. For SwiftUI, pass a `VPNPrompts`
+  /// you keep a reference to, so your views can show its prompts.
+  ///
   /// - Parameter delegate: The delegate to handle authentication and certificate validation
-  public init(delegate: VpnSessionDelegate) {
+  public init(delegate: any VPNSessionDelegate) {
     self.delegate = delegate
   }
 
@@ -126,29 +146,32 @@ public final class VpnSession {
   /// 5. Starts the mainloop
   ///
   /// It returns once the tunnel is up. The `status` property is updated throughout, and it is
-  /// `.connecting` as soon as this method is called.
+  /// `.connecting` as soon as this method is called. If the connection fails, the error is
+  /// thrown and also kept in `lastError`.
   ///
-  /// Cancelling the calling task cancels the connection attempt, as does `disconnect()`. An auth
-  /// form or certificate prompt that is waiting for the user still has to be answered first.
+  /// Cancelling the calling task cancels the connection attempt, as does `disconnect()`. A prompt
+  /// that is waiting for the user is cancelled too (see `VPNSessionDelegate`).
   ///
   /// - Parameter configuration: The VPN configuration for this connection
-  /// - Throws: `VpnError` if connection fails at any step, `VpnError.cancelled` if it was
-  ///   cancelled, `VpnError.alreadyConnected` if the session isn't disconnected
-  public func connect(configuration: VpnConfiguration) async throws {
+  /// - Throws: `VPNError.cancelled` if it was cancelled, `VPNError.alreadyActive` if the
+  ///   session isn't disconnected, otherwise the `VPNError` the failing step reported
+  public func connect(using configuration: VPNConfiguration) async throws(VPNError) {
     guard case .disconnected = status else {
-      throw VpnError.alreadyConnected
+      throw .alreadyActive
     }
 
     // Set before the first suspension, so a second call can't get past the guard above.
-    status = .connecting(stage: "Initializing connection")
+    status = .connecting(.authenticating)
+    lastError = nil
     stats = nil
 
-    let context: VpnContext
+    let context: VPNContext
     do {
-      context = try VpnContext(
-        configuration: configuration, callbacks: makeCallbacks(configuration))
+      context = try VPNContext(
+        configuration: configuration, callbacks: makeCallbacks())
     } catch {
-      status = .disconnected(error: error)
+      lastError = error
+      status = .disconnected
       throw error
     }
     self.context = context
@@ -160,30 +183,46 @@ public final class VpnSession {
       }
     }
 
-    try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
+    // A non-throwing continuation with a Result, because a throwing continuation can only carry
+    // `any Error`; `get()` then rethrows it as `VPNError`.
+    let result = await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
         connectContinuation = continuation
         context.start()
       }
-    } onCancel: {
+    } onCancel: { [weak self] in
       context.cancel()
+      // The prompt task belongs to the session, so cancelling it happens on the main actor.
+      Task { @MainActor in
+        self?.cancelPendingPrompt?()
+      }
     }
+    try result.get()
   }
 
-  /// Disconnects from the VPN server.
+  /// Disconnects from the VPN server, and returns once the connection has been shut down.
   ///
-  /// The status changes to `.disconnecting` right away, and to `.disconnected` once the
-  /// connection has been shut down. While connecting, this cancels the attempt, and `connect`
-  /// throws `VpnError.cancelled`.
+  /// The status changes to `.disconnecting` right away, and to `.disconnected` when the
+  /// connection has ended. While connecting, this cancels the attempt, and `connect` throws
+  /// `VPNError.cancelled`. If a disconnect is already in progress, this waits for it too.
   ///
-  /// This method is safe to call multiple times.
-  public func disconnect() {
+  /// A prompt that is waiting for the user is cancelled too (see `VPNSessionDelegate`). Without
+  /// a connection, this returns immediately.
+  public func disconnect() async {
     switch status {
-    case .disconnected, .disconnecting:
+    case .disconnected:
       return
+    case .disconnecting:
+      break
     case .connecting, .connected, .reconnecting:
       status = .disconnecting
+      // Cancel the context first: when the prompt's answer comes back, the cancellation must
+      // already be recorded, so the failure that follows reads as `.cancelled`.
       context?.cancel()
+      cancelPendingPrompt?()
+    }
+    await withCheckedContinuation { continuation in
+      disconnectContinuations.append(continuation)
     }
   }
 
@@ -193,26 +232,25 @@ public final class VpnSession {
   ///
   /// Besides `connect` and `disconnect`, lifecycle events are the only thing that changes
   /// `status`.
-  private func handle(_ event: VpnContext.Lifecycle) {
+  private func handle(_ event: VPNContext.Lifecycle) {
     switch event {
     case .stage(let stage):
       // After disconnect(), the status stays .disconnecting until the connection has ended.
       if case .connecting = status {
-        status = .connecting(stage: stage)
+        status = .connecting(stage)
       }
 
-    case .established(let interfaceName):
+    case .established(let info):
       // If disconnect() was called meanwhile, wait for .finished.
       guard case .connecting = status else { return }
-      status = .connected
-      self.interfaceName = interfaceName
+      status = .connected(info)
       startStatsPolling()
-      connectContinuation?.resume()
+      connectContinuation?.resume(returning: .success(()))
       connectContinuation = nil
 
     case .reconnected:
-      if case .reconnecting = status {
-        status = .connected
+      if case .reconnecting(let info) = status {
+        status = .connected(info)
       }
 
     case .finished(let error):
@@ -220,43 +258,49 @@ public final class VpnSession {
     }
   }
 
-  /// Cleans up after the connection has ended, and resumes `connect` if it's still waiting.
-  private func finish(_ error: VpnError?) {
+  /// Cleans up after the connection has ended, and resumes `connect` and `disconnect()` calls
+  /// that are still waiting.
+  private func finish(_ error: VPNError?) {
     statsTask?.cancel()
     statsTask = nil
     lifecycleTask = nil
     context = nil
-    interfaceName = nil
     // A cancellation isn't an error from the user's point of view; connect() still throws it.
-    if case .cancelled? = error {
-      status = .disconnected(error: nil)
-    } else {
-      status = .disconnected(error: error)
-    }
-    connectContinuation?.resume(throwing: error ?? VpnError.cancelled)
+    lastError = error == .cancelled ? nil : error
+    status = .disconnected
+
+    connectContinuation?.resume(returning: .failure(error ?? .cancelled))
     connectContinuation = nil
+    for continuation in disconnectContinuations {
+      continuation.resume()
+    }
+    disconnectContinuations.removeAll()
   }
 
   // MARK: - Context Callbacks
 
   /// The callbacks the context calls on its connection thread.
-  private func makeCallbacks(_ configuration: VpnConfiguration) -> VpnContext.Callbacks {
-    let allowInsecureCertificates = configuration.allowInsecureCertificates
+  private func makeCallbacks() -> VPNContext.Callbacks {
     let logBroadcaster = logBroadcaster
 
-    return VpnContext.Callbacks(
-      // Auth form → bridge to async delegate via semaphore
+    return VPNContext.Callbacks(
+      // Auth form → the delegate, on the main actor, while the connection thread waits for the
+      // answer (semaphore bridge). If the session is gone, cancel.
       authenticate: { [weak self] form in
         blockForMainActor {
-          guard let self, let delegate = self.delegate else { return nil }
-          return await delegate.vpnSession(self, requiresAuthentication: form)
+          guard let self else { return nil }
+          return await self.prompt(orIfCancelled: nil) { delegate in
+            await delegate.vpnSession(self, requiresAuthentication: form)
+          }
         }
       },
-      // Cert validation → bridge to async delegate via semaphore
+      // Cert validation → the delegate, the same way. If the session is gone, reject.
       validateCertificate: { [weak self] certInfo in
         blockForMainActor {
-          guard let self, let delegate = self.delegate else { return allowInsecureCertificates }
-          return await delegate.vpnSession(self, shouldAcceptCertificate: certInfo)
+          guard let self else { return false }
+          return await self.prompt(orIfCancelled: false) { delegate in
+            await delegate.vpnSession(self, shouldAcceptCertificate: certInfo)
+          }
         }
       },
       // Log messages → every `logs` stream, straight from the connection thread
@@ -276,6 +320,30 @@ public final class VpnSession {
         }
       }
     )
+  }
+
+  // MARK: - Prompts
+
+  /// Asks the delegate, in a task that `disconnect()` and task cancellation can cancel.
+  ///
+  /// After a cancellation the delegate's answer is ignored and `fallback` is returned: the
+  /// connection is ending either way, and a delegate that doesn't handle cancellation may still
+  /// answer later.
+  private func prompt<Answer: Sendable>(
+    orIfCancelled fallback: Answer,
+    _ ask: @MainActor @escaping (any VPNSessionDelegate) async -> Answer
+  ) async -> Answer {
+    // The connection may have been cancelled just before openconnect asked; don't show a prompt
+    // for a connection that is already ending.
+    guard let context, !context.isCancelled else { return fallback }
+
+    let delegate = delegate
+    let task = Task(name: "OpenConnectKit.prompt") { await ask(delegate) }
+    cancelPendingPrompt = { task.cancel() }
+    defer { cancelPendingPrompt = nil }
+
+    let answer = await task.value
+    return task.isCancelled ? fallback : answer
   }
 
   // MARK: - Stats Polling

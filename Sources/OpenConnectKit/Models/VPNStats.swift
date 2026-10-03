@@ -1,5 +1,5 @@
 //
-//  VpnStats.swift
+//  VPNStats.swift
 //  OpenConnectKit
 //
 //  VPN traffic statistics model
@@ -15,18 +15,17 @@ import Foundation
 /// Statistics are cumulative since the connection was established and persist
 /// across reconnections during the same session.
 ///
+/// `VPNSession` requests them every 5 seconds while connected and publishes them as its
+/// observable `stats` property.
+///
 /// ## Example Usage
 ///
 /// ```swift
-/// session.onStats = { stats in
-///     print("Sent: \(stats.txBytes) bytes (\(stats.txPackets) packets)")
-///     print("Received: \(stats.rxBytes) bytes (\(stats.rxPackets) packets)")
+/// if let stats = session.stats {
+///     Text("Sent: \(stats.formattedTxBytes), received: \(stats.formattedRxBytes)")
 /// }
-///
-/// // Request statistics
-/// session.requestStats()
 /// ```
-public struct VpnStats: Sendable {
+public struct VPNStats: Sendable {
   // MARK: - Properties
 
   /// Number of packets transmitted (sent) through the VPN.
@@ -95,23 +94,23 @@ public struct VpnStats: Sendable {
 
   /// Returns a human-readable string representation of transmitted bytes.
   public var formattedTxBytes: String {
-    return VpnStats.formatBytes(txBytes)
+    return VPNStats.formatBytes(txBytes)
   }
 
   /// Returns a human-readable string representation of received bytes.
   public var formattedRxBytes: String {
-    return VpnStats.formatBytes(rxBytes)
+    return VPNStats.formatBytes(rxBytes)
   }
 
   /// Returns a human-readable string representation of total bytes.
   public var formattedTotalBytes: String {
-    return VpnStats.formatBytes(totalBytes)
+    return VPNStats.formatBytes(totalBytes)
   }
 }
 
 // MARK: - CustomStringConvertible
 
-extension VpnStats: CustomStringConvertible {
+extension VPNStats: CustomStringConvertible {
   /// A textual representation of the VPN statistics.
   public var description: String {
     return """
@@ -125,8 +124,8 @@ extension VpnStats: CustomStringConvertible {
 
 // MARK: - Equatable
 
-extension VpnStats: Equatable {
-  public static func == (lhs: VpnStats, rhs: VpnStats) -> Bool {
+extension VPNStats: Equatable {
+  public static func == (lhs: VPNStats, rhs: VPNStats) -> Bool {
     return lhs.txPackets == rhs.txPackets && lhs.txBytes == rhs.txBytes
       && lhs.rxPackets == rhs.rxPackets && lhs.rxBytes == rhs.rxBytes
   }

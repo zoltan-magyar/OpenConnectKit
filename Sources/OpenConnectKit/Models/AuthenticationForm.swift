@@ -11,17 +11,18 @@ import Foundation
 ///
 /// The VPN server may present one or more authentication forms during the
 /// connection process. Fill in the field values and return the modified form
-/// in the `onAuthenticationRequired` callback.
+/// from `VPNSessionDelegate.vpnSession(_:requiresAuthentication:)`.
 ///
 /// ## Example
 ///
 /// ```swift
-/// session.onAuthenticationRequired = { form in
-///     print("Authentication: \(form.title)")
+/// func vpnSession(
+///     _ session: VPNSession,
+///     requiresAuthentication form: AuthenticationForm
+/// ) async -> AuthenticationForm? {
 ///     var filledForm = form
-///
-///     for (index, field) in filledForm.fields.enumerated() {
-///         switch field.type {
+///     for index in filledForm.fields.indices {
+///         switch filledForm.fields[index].kind {
 ///         case .password:
 ///             filledForm.fields[index].value = "secretpassword"
 ///         case .text:
@@ -43,7 +44,7 @@ public struct AuthenticationForm: Sendable {
   public let message: String?
 
   /// The authentication fields that need to be filled.
-  public var fields: [AuthField]
+  public var fields: [Field]
 
   // MARK: - Initialization
 
@@ -53,70 +54,72 @@ public struct AuthenticationForm: Sendable {
   ///   - title: The form title
   ///   - message: Optional message or banner text
   ///   - fields: The authentication fields
-  public init(title: String, message: String? = nil, fields: [AuthField]) {
+  public init(title: String, message: String? = nil, fields: [Field]) {
     self.title = title
     self.message = message
     self.fields = fields
   }
 }
 
-// MARK: - AuthField
+// MARK: - Field
 
-/// A single field in an authentication form.
-public struct AuthField: Sendable {
-  // MARK: - Properties
+extension AuthenticationForm {
+  /// A single field in an authentication form.
+  public struct Field: Sendable {
+    // MARK: - Properties
 
-  /// The field identifier.
-  public let id: String
+    /// The field identifier.
+    public let id: String
 
-  /// The label to display to the user.
-  public let label: String
+    /// The label to display to the user.
+    public let label: String
 
-  /// The type of field (text, password, etc.).
-  public let type: FieldType
+    /// What kind of field this is (text, password, etc.).
+    public let kind: Kind
 
-  /// The current value of the field.
-  public var value: String
+    /// The current value of the field.
+    public var value: String
 
-  /// Whether this field is required.
-  public let isRequired: Bool
+    /// Whether this field is required.
+    public let isRequired: Bool
 
-  // MARK: - Initialization
+    // MARK: - Initialization
 
-  /// Creates an authentication field.
-  ///
-  /// - Parameters:
-  ///   - id: The field identifier
-  ///   - label: The label to display to the user
-  ///   - type: The field type
-  ///   - value: The current field value (default: empty string)
-  ///   - isRequired: Whether the field is required (default: `true`)
-  public init(
-    id: String, label: String, type: FieldType, value: String = "", isRequired: Bool = true
-  ) {
-    self.id = id
-    self.label = label
-    self.type = type
-    self.value = value
-    self.isRequired = isRequired
-  }
-
-  // MARK: - FieldType
-
-  /// The type of authentication field.
-  public enum FieldType: Sendable {
-    /// Regular text input.
-    case text
-
-    /// Password input (should be hidden from display).
-    case password
-
-    /// Hidden field (pre-filled, not shown to user).
-    case hidden
-
-    /// Select/dropdown field with options.
+    /// Creates an authentication field.
     ///
-    /// - Parameter options: Available options for selection
-    case select(options: [String])
+    /// - Parameters:
+    ///   - id: The field identifier
+    ///   - label: The label to display to the user
+    ///   - kind: What kind of field this is
+    ///   - value: The current field value (default: empty string)
+    ///   - isRequired: Whether the field is required (default: `true`)
+    public init(
+      id: String, label: String, kind: Kind, value: String = "", isRequired: Bool = true
+    ) {
+      self.id = id
+      self.label = label
+      self.kind = kind
+      self.value = value
+      self.isRequired = isRequired
+    }
+
+    // MARK: - Kind
+
+    /// The kind of authentication field.
+    public enum Kind: Sendable {
+      /// Regular text input.
+      case text
+
+      /// Password input (should be hidden from display).
+      case password
+
+      /// Hidden field (pre-filled, not shown to user).
+      case hidden
+
+      /// Select/dropdown field with options.
+      ///
+      /// - Parameter options: Available options for selection
+      case select(options: [String])
+    }
   }
 }

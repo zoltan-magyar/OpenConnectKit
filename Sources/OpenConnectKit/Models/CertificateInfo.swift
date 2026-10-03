@@ -10,18 +10,19 @@ import Foundation
 /// Information about a server certificate that needs validation.
 ///
 /// This structure contains details about a certificate presented by the VPN server
-/// that requires validation. Use this information in the `onCertificateValidation`
-/// callback to decide whether to accept or reject the certificate.
+/// that requires validation. Use it in
+/// `VPNSessionDelegate.vpnSession(_:shouldAcceptCertificate:)` to decide whether to accept
+/// or reject the certificate.
 ///
 /// ## Example
 ///
 /// ```swift
-/// session.onCertificateValidation = { certInfo in
-///     print("Certificate issue: \(certInfo.reason)")
-///     if let hostname = certInfo.hostname {
-///         print("Server: \(hostname)")
-///     }
-///     return true  // Accept despite issues
+/// func vpnSession(
+///     _ session: VPNSession,
+///     shouldAcceptCertificate info: CertificateInfo
+/// ) async -> Bool {
+///     print("Certificate issue: \(info.reason)")
+///     return await askUserToTrust(info)
 /// }
 /// ```
 public struct CertificateInfo: Sendable {

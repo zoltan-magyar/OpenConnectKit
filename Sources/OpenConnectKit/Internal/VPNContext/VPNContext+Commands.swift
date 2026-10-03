@@ -1,8 +1,8 @@
 //
-//  VpnContext+Commands.swift
+//  VPNContext+Commands.swift
 //  OpenConnectKit
 //
-//  Command sending extension for VpnContext
+//  Command sending extension for VPNContext
 //
 
 import COpenConnect
@@ -10,19 +10,19 @@ import Foundation
 
 // MARK: - Command Sending
 
-extension VpnContext {
+extension VPNContext {
   /// Cancels the connection, whatever stage it's in. Safe to call from any thread.
   ///
   /// While connecting, openconnect also watches the command pipe during network I/O, so this
   /// aborts authentication too. An auth form or certificate prompt that is waiting for the
   /// user still has to be answered first. Once established, the mainloop logs off and exits.
-  func cancel() {
+  internal func cancel() {
     callbacks.markCancelled()
     sendCommand(.cancel)
   }
 
   /// Asks the mainloop for traffic statistics, which arrive through `callbacks.stats`.
-  func requestStats() {
+  internal func requestStats() {
     sendCommand(.stats)
   }
 

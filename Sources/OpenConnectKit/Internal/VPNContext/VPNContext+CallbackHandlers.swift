@@ -1,5 +1,5 @@
 //
-//  VpnContext+CallbackHandlers.swift
+//  VPNContext+CallbackHandlers.swift
 //  OpenConnectKit
 //
 //  OpenConnect C callback implementations
@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - C Callback Entry Points
 //
-// openconnect calls all of these on the connection thread, with the VpnContext.Callbacks object
+// openconnect calls all of these on the connection thread, with the VPNContext.Callbacks object
 // passed to openconnect_vpninfo_new() as privdata.
 
 /// C callback for log messages, already formatted by the library.
@@ -27,13 +27,18 @@ internal func progressCallback(
     return
   }
 
-  let callbacks = VpnContext.Callbacks.from(privdata)
+  let callbacks = VPNContext.Callbacks.from(privdata)
 
   var text = String(cString: message)
 
   // Strip trailing newline
   if text.hasSuffix("\n") {
     text = String(text.dropLast())
+  }
+
+  // Remembered so a failing step can say why it failed (see VPNContext.errorMessage(or:)).
+  if level == PRG_ERR {
+    callbacks.recordErrorMessage(text)
   }
 
   callbacks.log(LogLevel(openConnectLevel: level), text)
@@ -48,10 +53,15 @@ internal func validatePeerCertCallback(
     return 1
   }
 
-  let callbacks = VpnContext.Callbacks.from(privdata)
+  let callbacks = VPNContext.Callbacks.from(privdata)
   let certInfo = CertificateInfo(from: reason)
 
-  return callbacks.validateCertificate(certInfo) ? 0 : 1
+  guard callbacks.validateCertificate(certInfo) else {
+    // Recorded so the failure that follows reads as a rejected certificate.
+    callbacks.markCertificateRejected()
+    return 1
+  }
+  return 0
 }
 
 /// C callback for authentication forms. Returns an `OC_FORM_RESULT_*` code.
@@ -66,7 +76,7 @@ internal func processAuthFormCallback(
     return OC_FORM_RESULT_ERR
   }
 
-  let callbacks = VpnContext.Callbacks.from(privdata)
+  let callbacks = VPNContext.Callbacks.from(privdata)
 
   let authForm = AuthenticationForm(from: form)
 
@@ -84,7 +94,7 @@ internal func reconnectedCallback(privdata: UnsafeMutableRawPointer?) {
     return
   }
 
-  VpnContext.Callbacks.from(privdata).report(.reconnected)
+  VPNContext.Callbacks.from(privdata).report(.reconnected)
 }
 
 /// C callback for traffic statistics. Triggered by requestStats() command.
@@ -99,19 +109,19 @@ internal func statsCallback(
     return
   }
 
-  let vpnStats = VpnStats(
+  let vpnStats = VPNStats(
     txPackets: stats.pointee.tx_pkts,
     txBytes: stats.pointee.tx_bytes,
     rxPackets: stats.pointee.rx_pkts,
     rxBytes: stats.pointee.rx_bytes
   )
 
-  VpnContext.Callbacks.from(privdata).stats(vpnStats)
+  VPNContext.Callbacks.from(privdata).stats(vpnStats)
 }
 
 // MARK: - Helper Methods
 
-extension VpnContext {
+extension VPNContext {
   /// Finds the vpnc-script executable.
   ///
   /// Uses the configured path if explicitly set, otherwise uses the bundled script.

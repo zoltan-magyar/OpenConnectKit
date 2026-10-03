@@ -1,5 +1,5 @@
 //
-//  VpnConfiguration.swift
+//  VPNConfiguration.swift
 //  OpenConnectKit
 //
 //  Configuration for VPN sessions
@@ -9,35 +9,30 @@ import Foundation
 
 /// Configuration for establishing a VPN connection.
 ///
-/// Use this structure to specify all settings for a VPN session, including
-/// server details, protocol, credentials, and security preferences.
+/// Use this structure to specify the settings for a VPN connection: the server,
+/// protocol, logging, tunnel and reconnection behaviour. Credentials and certificate
+/// decisions come from the session's `VPNSessionDelegate` instead.
 ///
 /// ## Example
 ///
 /// ```swift
-/// let config = VpnConfiguration(
+/// let config = VPNConfiguration(
 ///     serverURL: URL(string: "https://vpn.example.com")!,
 ///     vpnProtocol: .anyConnect,
 ///     logLevel: .info
 /// )
 /// ```
-public struct VpnConfiguration: Sendable {
+public struct VPNConfiguration: Sendable {
   // MARK: - Properties
 
   /// The VPN server URL (e.g., `https://vpn.example.com`).
   public var serverURL: URL
 
   /// The VPN protocol to use.
-  public var vpnProtocol: VpnProtocol
+  public var vpnProtocol: VPNProtocol
 
   /// Log level for VPN messages.
   public var logLevel: LogLevel
-
-  /// Whether to allow connections with invalid or self-signed certificates.
-  ///
-  /// Default is `false` (reject invalid certificates).
-  /// Set to `true` only for testing or when you trust the server.
-  public var allowInsecureCertificates: Bool
 
   // MARK: - TUN Device Configuration
 
@@ -64,21 +59,19 @@ public struct VpnConfiguration: Sendable {
 
   // MARK: - Reconnection Configuration
 
-  /// Timeout in seconds before giving up on reconnection attempts.
+  /// How long, in seconds, to keep trying to reconnect before giving up.
   ///
   /// If the VPN connection drops, OpenConnect will attempt to reconnect.
-  /// This value specifies how long to keep trying before giving up.
+  /// This is the total time budget for those attempts.
   ///
-  /// Valid range: 10-100 seconds (enforced by OpenConnect)
   /// Default is `300` seconds (5 minutes).
   public var reconnectTimeout: Int32
 
-  /// Interval in seconds between reconnection attempts.
+  /// The wait, in seconds, before the second reconnection attempt.
   ///
-  /// When the connection drops, OpenConnect will wait this long between
-  /// each reconnection attempt.
+  /// After each failed attempt, OpenConnect waits a little longer: the wait grows by this
+  /// value every time, up to 100 seconds (10 s, 20 s, 30 s, … with the default).
   ///
-  /// Valid range: 10-100 seconds (enforced by OpenConnect)
   /// Default is `10` seconds.
   public var reconnectInterval: Int32
 
@@ -90,16 +83,14 @@ public struct VpnConfiguration: Sendable {
   ///   - serverURL: The VPN server URL
   ///   - vpnProtocol: The VPN protocol (default: `.anyConnect`)
   ///   - logLevel: The log level (default: `.info`)
-  ///   - allowInsecureCertificates: Whether to allow invalid certificates (default: `false`)
   ///   - vpncScript: Path to vpnc-script (default: `nil` for auto-detect)
   ///   - interfaceName: Network interface name (default: `nil` for auto-assign)
   ///   - reconnectTimeout: Timeout for reconnection attempts (default: `300` seconds)
   ///   - reconnectInterval: Interval between reconnection attempts (default: `10` seconds)
   public init(
     serverURL: URL,
-    vpnProtocol: VpnProtocol = .anyConnect,
+    vpnProtocol: VPNProtocol = .anyConnect,
     logLevel: LogLevel = .info,
-    allowInsecureCertificates: Bool = false,
     vpncScript: String? = nil,
     interfaceName: String? = nil,
     reconnectTimeout: Int32 = 300,
@@ -108,7 +99,6 @@ public struct VpnConfiguration: Sendable {
     self.serverURL = serverURL
     self.vpnProtocol = vpnProtocol
     self.logLevel = logLevel
-    self.allowInsecureCertificates = allowInsecureCertificates
     self.vpncScript = vpncScript
     self.interfaceName = interfaceName
     self.reconnectTimeout = reconnectTimeout
@@ -116,10 +106,10 @@ public struct VpnConfiguration: Sendable {
   }
 }
 
-// MARK: - VpnProtocol
+// MARK: - VPNProtocol
 
 /// Supported VPN protocols.
-public enum VpnProtocol: String, Sendable, CaseIterable {
+public enum VPNProtocol: String, Sendable, CaseIterable {
   /// Cisco AnyConnect
   case anyConnect = "anyconnect"
 

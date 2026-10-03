@@ -27,7 +27,7 @@ extension AuthenticationForm {
       self.message = nil
     }
 
-    var fields: [AuthField] = []
+    var fields: [Field] = []
     var currentOption = form.opts
 
     while let option = currentOption {
@@ -45,14 +45,14 @@ extension AuthenticationForm {
         value = String(cString: valuePtr)
       }
 
-      let fieldType: AuthField.FieldType
+      let kind: Field.Kind
       let fieldId = label  // Use label as ID for now
 
       switch opt.type {
       case OC_FORM_OPT_PASSWORD:
-        fieldType = .password
+        kind = .password
       case OC_FORM_OPT_HIDDEN:
-        fieldType = .hidden
+        kind = .hidden
       case OC_FORM_OPT_SELECT:
         // A select option is an oc_form_opt_select, which starts with an oc_form_opt. Only the
         // type tag says the allocation is the larger struct, so reinterpret after checking it.
@@ -75,15 +75,15 @@ extension AuthenticationForm {
           value = options.indices.contains(selected) ? options[selected] : options.first ?? ""
         }
 
-        fieldType = .select(options: options)
+        kind = .select(options: options)
       default:
-        fieldType = .text
+        kind = .text
       }
 
-      let field = AuthField(
+      let field = Field(
         id: fieldId,
         label: label,
-        type: fieldType,
+        kind: kind,
         value: value,
         isRequired: true
       )

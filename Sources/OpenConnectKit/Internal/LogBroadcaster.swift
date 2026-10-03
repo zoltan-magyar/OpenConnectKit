@@ -2,27 +2,27 @@
 //  LogBroadcaster.swift
 //  OpenConnectKit
 //
-//  Fans log entries out to every VpnSession.logs stream
+//  Fans log entries out to every VPNSession.logs stream
 //
 
 import Foundation
 import Synchronization
 
-// Hands each reader of `VpnSession.logs` its own stream and copies every entry into all of them.
+// Hands each reader of `VPNSession.logs` its own stream and copies every entry into all of them.
 //
 // An `AsyncStream` supports one reader, and ends for good once that reader's task is cancelled,
 // which happens whenever a SwiftUI `.task` restarts. A stream per reader avoids both.
 //
 // Entries are yielded straight from openconnect's thread, without a hop to the main actor:
 // at trace level there can be a lot of them.
-final class LogBroadcaster: Sendable {
+internal final class LogBroadcaster: Sendable {
   /// How far a reader can fall behind before its oldest entries are dropped.
-  static let bufferSize = 1_000
+  internal static let bufferSize = 1_000
 
   private let continuations = Mutex<[UUID: AsyncStream<LogEntry>.Continuation]>([:])
 
   /// A new stream that receives every entry from now on, until it's cancelled or `finish()`.
-  func makeStream() -> AsyncStream<LogEntry> {
+  internal func makeStream() -> AsyncStream<LogEntry> {
     let (stream, continuation) = AsyncStream.makeStream(
       of: LogEntry.self, bufferingPolicy: .bufferingNewest(Self.bufferSize))
     let id = UUID()
@@ -33,7 +33,7 @@ final class LogBroadcaster: Sendable {
     return stream
   }
 
-  func yield(_ entry: LogEntry) {
+  internal func yield(_ entry: LogEntry) {
     // Yield outside the lock: a stream's onTermination handler takes it too.
     for continuation in continuations.withLock({ Array($0.values) }) {
       continuation.yield(entry)
@@ -41,7 +41,7 @@ final class LogBroadcaster: Sendable {
   }
 
   /// Ends every stream.
-  func finish() {
+  internal func finish() {
     let all = continuations.withLock { continuations in
       defer { continuations.removeAll() }
       return Array(continuations.values)

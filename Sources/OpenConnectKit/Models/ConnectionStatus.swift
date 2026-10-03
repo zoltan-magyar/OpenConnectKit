@@ -7,101 +7,64 @@
 
 import Foundation
 
-/// Represents the current status of a VPN connection.
+/// The state of a VPN session's connection.
 ///
-/// This enum provides a type-safe way to track the connection lifecycle,
-/// including any errors that caused disconnection and progress messages
-/// during connection establishment.
+/// Why the last connection failed, if it did, is in `VPNSession.lastError`.
 ///
 /// ## Example Usage
 ///
 /// ```swift
 /// switch session.status {
-/// case .disconnected(let error):
-///     if let error = error {
-///         print("Disconnected due to error: \(error)")
-///     } else {
-///         print("Disconnected normally")
-///     }
+/// case .disconnected:
+///     print(session.lastError?.localizedDescription ?? "Disconnected")
 /// case .connecting(let stage):
 ///     print("Connecting: \(stage)")
-/// case .connected:
-///     print("Connected successfully")
+/// case .connected(let info):
+///     print("Connected through \(info.interfaceName ?? "an unknown interface")")
+/// case .reconnecting:
+///     print("Reconnecting...")
 /// case .disconnecting:
 ///     print("Disconnecting...")
-/// case .reconnecting:
-///     print("Attempting to reconnect...")
 /// }
 /// ```
-public enum ConnectionStatus: Equatable, Sendable {
-  /// The VPN is disconnected.
-  ///
-  /// The associated `VpnError` indicates why the disconnection occurred:
-  /// - `nil` - User initiated disconnect or normal disconnection
-  /// - Non-nil - Connection failed or was interrupted due to an error
-  ///
-  /// - Parameter error: Optional error that caused the disconnection
-  case disconnected(error: VpnError?)
+public enum ConnectionStatus: Hashable, Sendable {
+  /// Not connected. If the last connection failed, `VPNSession.lastError` says why.
+  case disconnected
 
-  /// The VPN is in the process of connecting.
-  ///
-  /// The associated string provides details about the current connection stage,
-  /// such as:
-  /// - "Authenticating..."
-  /// - "Establishing CSTP connection"
-  /// - "Setting up DTLS"
-  /// - "Configuring tunnel"
-  ///
-  /// This allows for flexible progress reporting without requiring a fixed
-  /// set of connection stages.
-  ///
-  /// - Parameter stage: Human-readable description of the current connection stage
-  case connecting(stage: String)
+  /// A connection is being set up; the associated value is the current step.
+  case connecting(ConnectionStage)
 
-  /// The VPN is fully connected and the mainloop is running.
-  ///
-  /// In this state, traffic is being routed through the VPN tunnel and
-  /// the connection is actively maintained.
-  case connected
+  /// The tunnel is up.
+  case connected(ConnectionInfo)
 
-  /// The VPN is in the process of disconnecting.
-  ///
-  /// A cancel command has been sent to the mainloop but it hasn't exited yet.
-  /// Cleanup and resource release happen after the mainloop returns, at which
-  /// point the status transitions to `.disconnected`.
-  case disconnecting
-
-  /// The VPN is attempting to reconnect after a connection loss.
-  ///
-  /// This state indicates that the connection was lost (e.g., due to network
-  /// interruption) and OpenConnect is automatically attempting to re-establish
-  /// the connection. This is different from the initial connection process.
+  /// The connection was lost and openconnect is trying to re-establish it. The tunnel's
+  /// details stay valid meanwhile.
   ///
   /// - Note: Not reported yet. openconnect reconnects inside its mainloop and only says so once
   ///   a reconnect has succeeded, so until it can also report the start of one, the status
   ///   stays `.connected` during an outage.
-  case reconnecting
+  case reconnecting(ConnectionInfo)
 
+  /// The connection is being shut down. The status becomes `.disconnected` once that's done.
+  case disconnecting
 }
 
-// MARK: - Equatable Conformance
+// MARK: - Convenience
 
 extension ConnectionStatus {
-  public static func == (lhs: ConnectionStatus, rhs: ConnectionStatus) -> Bool {
-    switch (lhs, rhs) {
-    case (.disconnected(let lhsError), .disconnected(let rhsError)):
-      // Compare errors by their localized description since VpnError doesn't conform to Equatable
-      return lhsError?.localizedDescription == rhsError?.localizedDescription
-    case (.connecting(let lhsStage), .connecting(let rhsStage)):
-      return lhsStage == rhsStage
-    case (.connected, .connected):
-      return true
-    case (.disconnecting, .disconnecting):
-      return true
-    case (.reconnecting, .reconnecting):
-      return true
-    default:
-      return false
+  /// The tunnel's details while connected or reconnecting, otherwise `nil`.
+  public var connectionInfo: ConnectionInfo? {
+    switch self {
+    case .connected(let info), .reconnecting(let info):
+      info
+    case .disconnected, .connecting, .disconnecting:
+      nil
     }
+  }
+
+  /// Whether a connection is being set up, is up, or is being shut down. `connect` only works
+  /// while this is `false`.
+  public var isActive: Bool {
+    self != .disconnected
   }
 }
