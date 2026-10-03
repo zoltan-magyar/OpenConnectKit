@@ -14,8 +14,8 @@ import Synchronization
 // Everything that touches `vpninfo` runs on one dedicated thread, started by `start()`:
 // authentication, CSTP, DTLS, TUN setup and then the mainloop. openconnect isn't thread-safe;
 // the only channel it supports from other threads is the command pipe, so `cancel()` and
-// `requestStats()` are the only calls other threads make. The thread reports back through
-// `events`, in order.
+// `requestStats()` are the only calls other threads make. The thread reports back by calling
+// the owner's `Callbacks`, and the connection's progress through `lifecycle`, in order.
 //
 // It's a thread and not `Task.detached` because every one of those calls blocks: on network
 // I/O, for as long as the user takes to fill in an auth form, and in the mainloop for the
@@ -26,8 +26,11 @@ import Synchronization
 final class VpnContext: Sendable {
   // MARK: - Types
 
-  /// What the connection thread reports, in order.
-  enum Event: Sendable {
+  /// The connection's progress, from the first step to the end.
+  ///
+  /// These go through one stream so the owner's state machine sees them in the order they
+  /// happened; in particular, `.finished` can never overtake `.established`.
+  enum Lifecycle: Sendable {
     /// A connection step started; a human-readable description.
     case stage(String)
 
@@ -37,42 +40,66 @@ final class VpnContext: Sendable {
     /// openconnect re-established the connection after losing it.
     case reconnected
 
-    /// Traffic statistics, in reply to `requestStats()`.
-    case stats(VpnStats)
-
     /// The connection ended. `nil` if it ended because of `cancel()`; `.cancelled` if it was
-    /// cancelled before it was established. Always the last event.
+    /// cancelled before it was established. Always the last element.
     case finished(VpnError?)
   }
 
-  /// What the C callbacks hand over to the owner. Called on the connection thread.
-  struct Handlers: Sendable {
-    /// Blocks until the form is filled in. Returning `nil` cancels the connection.
-    var authenticate: @Sendable (AuthenticationForm) -> AuthenticationForm?
-
-    /// Blocks until a decision is made. Returning `true` accepts the certificate.
-    var validateCertificate: @Sendable (CertificateInfo) -> Bool
-
-    /// Receives every log message. Called often, so it shouldn't block.
-    var log: @Sendable (LogLevel, String) -> Void
-  }
-
-  /// What the C callbacks reach through their `privdata` pointer.
+  /// How the context reaches its owner. The owner creates it; the C callbacks reach it through
+  /// their `privdata` pointer. Everything here is called on the connection thread.
   ///
   /// It's a separate object so it can exist before `openconnect_vpninfo_new()` is called,
-  /// which needs the pointer; that is what lets `vpnInfo` be a `let`. VpnContext keeps it alive
-  /// for as long as `vpnInfo` exists.
+  /// which needs the pointer; that is what lets `vpnInfo` be a `let`. It has to be a class,
+  /// because C holds on to its address. VpnContext keeps it alive for as long as `vpnInfo`
+  /// exists.
   final class Callbacks: Sendable {
-    let handlers: Handlers
-    let events: AsyncStream<Event>.Continuation
+    /// Blocks until the form is filled in. Returning `nil` cancels the connection.
+    let authenticate: @Sendable (AuthenticationForm) -> AuthenticationForm?
+
+    /// Blocks until a decision is made. Returning `true` accepts the certificate.
+    let validateCertificate: @Sendable (CertificateInfo) -> Bool
+
+    /// Receives every log message. Called often, so it shouldn't block.
+    let log: @Sendable (LogLevel, String) -> Void
+
+    /// Receives traffic statistics, in reply to `requestStats()`.
+    ///
+    /// Not ordered with `lifecycle`: a reply can still come in after `.finished` has been
+    /// reported, and the owner has to ignore it then.
+    let stats: @Sendable (VpnStats) -> Void
+
+    /// The owner reads the connection's progress from this. Finishes after `.finished`.
+    let lifecycle: AsyncStream<Lifecycle>
+
+    private let lifecycleContinuation: AsyncStream<Lifecycle>.Continuation
 
     /// Set by `cancel()`, and when the auth handler cancels. Read on the connection thread to
     /// tell a cancellation apart from a failure.
     private let cancelled = Atomic<Bool>(false)
 
-    init(handlers: Handlers, events: AsyncStream<Event>.Continuation) {
-      self.handlers = handlers
-      self.events = events
+    init(
+      authenticate: @escaping @Sendable (AuthenticationForm) -> AuthenticationForm?,
+      validateCertificate: @escaping @Sendable (CertificateInfo) -> Bool,
+      log: @escaping @Sendable (LogLevel, String) -> Void,
+      stats: @escaping @Sendable (VpnStats) -> Void
+    ) {
+      self.authenticate = authenticate
+      self.validateCertificate = validateCertificate
+      self.log = log
+      self.stats = stats
+      let (stream, continuation) = AsyncStream.makeStream(of: Lifecycle.self)
+      self.lifecycle = stream
+      self.lifecycleContinuation = continuation
+    }
+
+    /// Reports the connection's progress to the owner.
+    func report(_ event: Lifecycle) {
+      lifecycleContinuation.yield(event)
+    }
+
+    /// Ends `lifecycle`. Called once the connection is over.
+    func finishLifecycle() {
+      lifecycleContinuation.finish()
     }
 
     var isCancelled: Bool {
@@ -101,9 +128,6 @@ final class VpnContext: Sendable {
 
   let configuration: VpnConfiguration
 
-  /// Progress and the outcome of the connection. Finishes after `.finished`.
-  let events: AsyncStream<Event>
-
   let callbacks: Callbacks
 
   /// openconnect's connection state. Only the connection thread uses it, apart from `init` and
@@ -118,10 +142,7 @@ final class VpnContext: Sendable {
   /// Creates the openconnect state for a connection. Nothing connects until `start()`.
   ///
   /// - Throws: `VpnError` if openconnect can't be set up, or the server URL is invalid.
-  init(configuration: VpnConfiguration, handlers: Handlers) throws(VpnError) {
-    let (events, continuation) = AsyncStream.makeStream(of: Event.self)
-    let callbacks = Callbacks(handlers: handlers, events: continuation)
-
+  init(configuration: VpnConfiguration, callbacks: Callbacks) throws(VpnError) {
     guard
       let vpnInfo = openconnect_vpninfo_new(
         "AnyConnect Compatible OpenConnectKit Client",
@@ -154,7 +175,6 @@ final class VpnContext: Sendable {
     openconnect_set_stats_handler(vpnInfo, statsCallback)
 
     self.configuration = configuration
-    self.events = events
     self.callbacks = callbacks
     self.vpnInfo = vpnInfo
     self.commandPipe = commandPipe
@@ -163,10 +183,15 @@ final class VpnContext: Sendable {
   deinit {
     // Also closes both ends of the command pipe.
     openconnect_vpninfo_free(vpnInfo)
-    callbacks.events.finish()
+    callbacks.finishLifecycle()
   }
 
   // MARK: - Computed Properties
+
+  /// The connection's progress, in order. Finishes after `.finished`.
+  var lifecycle: AsyncStream<Lifecycle> {
+    callbacks.lifecycle
+  }
 
   /// Whether the connection was cancelled, by `cancel()` or from the auth form.
   var isCancelled: Bool {

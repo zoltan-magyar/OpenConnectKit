@@ -36,7 +36,7 @@ internal func progressCallback(
     text = String(text.dropLast())
   }
 
-  callbacks.handlers.log(LogLevel(openConnectLevel: level), text)
+  callbacks.log(LogLevel(openConnectLevel: level), text)
 }
 
 /// C callback for certificate validation. Returns 0 to accept, 1 to reject.
@@ -51,7 +51,7 @@ internal func validatePeerCertCallback(
   let callbacks = VpnContext.Callbacks.from(privdata)
   let certInfo = CertificateInfo(from: reason)
 
-  return callbacks.handlers.validateCertificate(certInfo) ? 0 : 1
+  return callbacks.validateCertificate(certInfo) ? 0 : 1
 }
 
 /// C callback for authentication forms. Returns an `OC_FORM_RESULT_*` code.
@@ -70,7 +70,7 @@ internal func processAuthFormCallback(
 
   let authForm = AuthenticationForm(from: form)
 
-  guard let filledForm = callbacks.handlers.authenticate(authForm) else {
+  guard let filledForm = callbacks.authenticate(authForm) else {
     // nil = user cancelled. Recorded so the failed cookie request reads as a cancellation.
     callbacks.markCancelled()
     return OC_FORM_RESULT_CANCELLED
@@ -84,7 +84,7 @@ internal func reconnectedCallback(privdata: UnsafeMutableRawPointer?) {
     return
   }
 
-  VpnContext.Callbacks.from(privdata).events.yield(.reconnected)
+  VpnContext.Callbacks.from(privdata).report(.reconnected)
 }
 
 /// C callback for traffic statistics. Triggered by requestStats() command.
@@ -106,7 +106,7 @@ internal func statsCallback(
     rxBytes: stats.pointee.rx_bytes
   )
 
-  VpnContext.Callbacks.from(privdata).events.yield(.stats(vpnStats))
+  VpnContext.Callbacks.from(privdata).stats(vpnStats)
 }
 
 // MARK: - Helper Methods

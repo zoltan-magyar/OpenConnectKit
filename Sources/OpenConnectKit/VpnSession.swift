@@ -87,9 +87,9 @@ public final class VpnSession {
   @ObservationIgnored
   private var connectContinuation: CheckedContinuation<Void, any Error>?
 
-  /// Applies the context's events, in order, to the observable state.
+  /// Applies the context's lifecycle, in order, to the observable state.
   @ObservationIgnored
-  private var eventTask: Task<Void, Never>?
+  private var lifecycleTask: Task<Void, Never>?
 
   /// Requests stats periodically while connected.
   @ObservationIgnored
@@ -109,7 +109,7 @@ public final class VpnSession {
   isolated deinit {
     // Without this the connection thread would keep the tunnel up, with nothing left to stop it.
     context?.cancel()
-    eventTask?.cancel()
+    lifecycleTask?.cancel()
     statsTask?.cancel()
     logBroadcaster.finish()
   }
@@ -145,16 +145,17 @@ public final class VpnSession {
 
     let context: VpnContext
     do {
-      context = try VpnContext(configuration: configuration, handlers: makeHandlers(configuration))
+      context = try VpnContext(
+        configuration: configuration, callbacks: makeCallbacks(configuration))
     } catch {
       status = .disconnected(error: error)
       throw error
     }
     self.context = context
 
-    let events = context.events
-    eventTask = Task(name: "OpenConnectKit.events") { [weak self] in
-      for await event in events {
+    let lifecycle = context.lifecycle
+    lifecycleTask = Task(name: "OpenConnectKit.lifecycle") { [weak self] in
+      for await event in lifecycle {
         self?.handle(event)
       }
     }
@@ -186,12 +187,13 @@ public final class VpnSession {
     }
   }
 
-  // MARK: - Events
+  // MARK: - Lifecycle
 
-  /// Applies an event from the connection thread to the observable state.
+  /// Applies a lifecycle event from the connection thread to the observable state.
   ///
-  /// This is the only place, besides `connect` and `disconnect`, that changes `status`.
-  private func handle(_ event: VpnContext.Event) {
+  /// Besides `connect` and `disconnect`, lifecycle events are the only thing that changes
+  /// `status`.
+  private func handle(_ event: VpnContext.Lifecycle) {
     switch event {
     case .stage(let stage):
       // After disconnect(), the status stays .disconnecting until the connection has ended.
@@ -213,34 +215,36 @@ public final class VpnSession {
         status = .connected
       }
 
-    case .stats(let stats):
-      self.stats = stats
-
     case .finished(let error):
-      statsTask?.cancel()
-      statsTask = nil
-      eventTask = nil
-      context = nil
-      interfaceName = nil
-      // A cancellation isn't an error from the user's point of view; connect() still throws it.
-      if case .cancelled? = error {
-        status = .disconnected(error: nil)
-      } else {
-        status = .disconnected(error: error)
-      }
-      connectContinuation?.resume(throwing: error ?? VpnError.cancelled)
-      connectContinuation = nil
+      finish(error)
     }
   }
 
-  // MARK: - Context Handlers
+  /// Cleans up after the connection has ended, and resumes `connect` if it's still waiting.
+  private func finish(_ error: VpnError?) {
+    statsTask?.cancel()
+    statsTask = nil
+    lifecycleTask = nil
+    context = nil
+    interfaceName = nil
+    // A cancellation isn't an error from the user's point of view; connect() still throws it.
+    if case .cancelled? = error {
+      status = .disconnected(error: nil)
+    } else {
+      status = .disconnected(error: error)
+    }
+    connectContinuation?.resume(throwing: error ?? VpnError.cancelled)
+    connectContinuation = nil
+  }
 
-  /// The handlers the context calls on its connection thread.
-  private func makeHandlers(_ configuration: VpnConfiguration) -> VpnContext.Handlers {
+  // MARK: - Context Callbacks
+
+  /// The callbacks the context calls on its connection thread.
+  private func makeCallbacks(_ configuration: VpnConfiguration) -> VpnContext.Callbacks {
     let allowInsecureCertificates = configuration.allowInsecureCertificates
     let logBroadcaster = logBroadcaster
 
-    return VpnContext.Handlers(
+    return VpnContext.Callbacks(
       // Auth form → bridge to async delegate via semaphore
       authenticate: { [weak self] form in
         blockForMainActor {
@@ -258,13 +262,26 @@ public final class VpnSession {
       // Log messages → every `logs` stream, straight from the connection thread
       log: { level, message in
         logBroadcaster.yield(LogEntry(level: level, message: message))
+      },
+      // Stats → observable property. Unlike the lifecycle, stats don't go through the ordered
+      // stream: each reply hops to the main actor on its own, so it isn't ordered with the
+      // lifecycle events. A reply requested just before the connection ended can therefore
+      // arrive after `.finished` has been handled, or after the next `connect` has already
+      // reset `stats`. Replies are only applied while connected, so a late one is dropped
+      // instead of showing up as the numbers of a connection that is gone.
+      stats: { [weak self] stats in
+        Task { @MainActor in
+          guard let self, case .connected = self.status else { return }
+          self.stats = stats
+        }
       }
     )
   }
 
   // MARK: - Stats Polling
 
-  /// Requests stats every 5 seconds until the connection ends.
+  /// Requests stats every 5 seconds until the connection ends. Replies arrive through the
+  /// `stats` callback.
   private func startStatsPolling() {
     statsTask?.cancel()
     statsTask = Task(name: "OpenConnectKit.stats") { [weak self] in

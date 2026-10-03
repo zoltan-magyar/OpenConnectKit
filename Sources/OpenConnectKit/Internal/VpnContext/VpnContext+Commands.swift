@@ -21,7 +21,7 @@ extension VpnContext {
     sendCommand(.cancel)
   }
 
-  /// Asks the mainloop for traffic statistics, which arrive as a `.stats` event.
+  /// Asks the mainloop for traffic statistics, which arrive through `callbacks.stats`.
   func requestStats() {
     sendCommand(.stats)
   }

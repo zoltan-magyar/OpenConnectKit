@@ -11,7 +11,7 @@ import Foundation
 // MARK: - Connection Management
 
 extension VpnContext {
-  /// Starts the connection on its own thread. Progress and the outcome arrive as `events`.
+  /// Starts the connection on its own thread. Progress and the outcome arrive in `lifecycle`.
   ///
   /// Call it once. The thread keeps the context alive until the connection has ended.
   func start() {
@@ -25,19 +25,18 @@ extension VpnContext {
 
   /// The connection thread: connects, then runs the mainloop until the connection ends.
   private func run() {
-    let events = callbacks.events
-    defer { events.finish() }
+    defer { callbacks.finishLifecycle() }
 
     do {
       try establish()
     } catch {
-      events.yield(.finished(isCancelled ? .cancelled : error))
+      callbacks.report(.finished(isCancelled ? .cancelled : error))
       return
     }
 
     let interfaceName = openconnect_get_ifname(vpnInfo).map { String(cString: $0) }
-    events.yield(.established(interfaceName: interfaceName))
-    events.yield(.finished(runMainloop()))
+    callbacks.report(.established(interfaceName: interfaceName))
+    callbacks.report(.finished(runMainloop()))
   }
 
   /// Connects to VPN: auth cookie -> CSTP -> DTLS -> TUN setup
@@ -49,25 +48,25 @@ extension VpnContext {
     // cancel() may have been called before the thread started.
     if isCancelled { throw .cancelled }
 
-    stage("Authenticating...")
+    callbacks.report(.stage("Authenticating..."))
     guard openconnect_obtain_cookie(vpnInfo) == 0 else {
       throw .cookieObtainFailed
     }
 
-    stage("Establishing CSTP connection")
+    callbacks.report(.stage("Establishing CSTP connection"))
     guard openconnect_make_cstp_connection(vpnInfo) == 0 else {
       throw .cstpConnectionFailed
     }
 
-    stage("Setting up DTLS")
+    callbacks.report(.stage("Setting up DTLS"))
     if openconnect_setup_dtls(vpnInfo, 60) != 0 {
       // Not fatal: the server may not offer DTLS at all ("No DTLS address"). Like openconnect's
       // own client, carry on over TLS, and disable DTLS so reconnects don't keep retrying it.
       openconnect_disable_dtls(vpnInfo)
-      callbacks.handlers.log(.info, "DTLS unavailable, using TLS only")
+      callbacks.log(.info, "DTLS unavailable, using TLS only")
     }
 
-    stage("Configuring tunnel")
+    callbacks.report(.stage("Configuring tunnel"))
     try setupTunDevice()
   }
 
@@ -88,9 +87,5 @@ extension VpnContext {
     else {
       throw .tunSetupFailed
     }
-  }
-
-  private func stage(_ description: String) {
-    callbacks.events.yield(.stage(description))
   }
 }
