@@ -54,7 +54,8 @@ internal func validatePeerCertCallback(
   }
 
   let callbacks = VPNContext.Callbacks.from(privdata)
-  let certInfo = CertificateInfo(from: reason)
+  // Read the certificate here: openconnect only guarantees it's available inside this callback.
+  let certInfo = CertificateInfo(reason: reason, vpnInfo: callbacks.vpnInfo)
 
   guard callbacks.validateCertificate(certInfo) else {
     // Recorded so the failure that follows reads as a rejected certificate.
@@ -85,7 +86,7 @@ internal func processAuthFormCallback(
     callbacks.markCancelled()
     return OC_FORM_RESULT_CANCELLED
   }
-  return filledForm.apply(to: form) ? OC_FORM_RESULT_OK : OC_FORM_RESULT_ERR
+  return filledForm.apply(to: form)
 }
 
 /// C callback when reconnection succeeds.

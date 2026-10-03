@@ -6,6 +6,10 @@
 //
 
 import Foundation
+import os
+
+/// openconnect's messages in the system log (Console.app, `log stream`).
+private let openconnectLog = Logger(subsystem: "OpenConnectKit", category: "openconnect")
 
 /// Manages VPN connections using the OpenConnect protocol.
 ///
@@ -303,8 +307,12 @@ public final class VPNSession {
           }
         }
       },
-      // Log messages → every `logs` stream, straight from the connection thread
+      // Log messages → every `logs` stream, straight from the connection thread, and the system
+      // log. The message keeps the system log's default privacy, so it's redacted outside a
+      // debugging session: at trace level it includes the login's HTTP traffic, credentials
+      // and all.
       log: { level, message in
+        openconnectLog.log(level: level.osLogType, "\(message)")
         logBroadcaster.yield(LogEntry(level: level, message: message))
       },
       // Stats → observable property. Unlike the lifecycle, stats don't go through the ordered

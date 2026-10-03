@@ -87,6 +87,12 @@ internal final class VPNContext: Sendable {
     /// `clearErrorMessages()`.
     private let recordedErrorMessages = Mutex<(first: String?, last: String?)>((nil, nil))
 
+    /// openconnect's connection state, for the certificate callback, which reads the server's
+    /// certificate. `VPNContext.init` attaches it right after `openconnect_vpninfo_new()`, before
+    /// anything can call back; after that it's only read, on the connection thread (starting the
+    /// thread orders that read after the write). Not usable once the context is gone.
+    nonisolated(unsafe) internal private(set) var vpnInfo: OpaquePointer?
+
     internal init(
       authenticate: @escaping @Sendable (AuthenticationForm) -> AuthenticationForm?,
       validateCertificate: @escaping @Sendable (CertificateInfo) -> Bool,
@@ -149,6 +155,10 @@ internal final class VPNContext: Sendable {
       recordedErrorMessages.withLock { $0 = (nil, nil) }
     }
 
+    internal func attach(_ vpnInfo: OpaquePointer) {
+      self.vpnInfo = vpnInfo
+    }
+
     /// Recovers the object from a C callback's `privdata`.
     internal static func from(_ privdata: UnsafeMutableRawPointer) -> Callbacks {
       Unmanaged<Callbacks>.fromOpaque(privdata).takeUnretainedValue()
@@ -201,9 +211,19 @@ internal final class VPNContext: Sendable {
       throw .internalError(reason: "Could not create the openconnect session")
     }
 
+    callbacks.attach(vpnInfo)
+
     // Receives log messages already formatted. Set before anything can log.
     openconnect_set_progress_msg_handler(vpnInfo, progressCallback)
     openconnect_set_loglevel(vpnInfo, configuration.logLevel.openConnectLevel)
+
+    // Before the URL: how openconnect reads it depends on the protocol.
+    guard openconnect_set_protocol(vpnInfo, configuration.vpnProtocol.rawValue) == 0 else {
+      openconnect_vpninfo_free(vpnInfo)
+      throw .invalidConfiguration(
+        reason: callbacks.firstErrorMessage
+          ?? "openconnect doesn't support \(configuration.vpnProtocol.displayName)")
+    }
 
     guard openconnect_parse_url(vpnInfo, configuration.serverURL.absoluteString) == 0 else {
       openconnect_vpninfo_free(vpnInfo)

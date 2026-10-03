@@ -7,11 +7,12 @@
 
 import Foundation
 
-/// Represents an authentication form that needs to be filled by the user.
+/// An authentication form the server wants filled in.
 ///
-/// The VPN server may present one or more authentication forms during the
-/// connection process. Fill in the field values and return the modified form
-/// from `VPNSessionDelegate.vpnSession(_:requiresAuthentication:)`.
+/// The server may send several forms in a row, for example a password form and then a
+/// one-time code. Fill in the field values and return the form from
+/// `VPNSessionDelegate.vpnSession(_:requiresAuthentication:)`. Values are matched to the
+/// server's fields by `Field.id`, so a UI may filter or reorder `fields` freely.
 ///
 /// ## Example
 ///
@@ -34,29 +35,38 @@ import Foundation
 ///     return filledForm
 /// }
 /// ```
-public struct AuthenticationForm: Sendable {
+public struct AuthenticationForm: Hashable, Sendable {
   // MARK: - Properties
 
-  /// The form title.
-  public let title: String?
+  /// Which form this is, as the server names it, for example `"main"`, or `"challenge"` for a
+  /// one-time code.
+  public let name: String?
 
-  /// Optional message or banner text.
+  /// Text the server shows with the login, such as a usage policy.
+  public let banner: String?
+
+  /// The server's prompt, for example "Please enter your username and password."
   public let message: String?
 
-  /// The authentication fields that need to be filled.
+  /// Why the previous attempt failed, for example "Login failed." Set when the server sends the
+  /// form again after a failed login.
+  public let error: String?
+
+  /// The fields to fill in.
   public var fields: [Field]
 
   // MARK: - Initialization
 
-  /// Creates an authentication form.
-  ///
-  /// - Parameters:
-  ///   - title: The form title
-  ///   - message: Optional message or banner text
-  ///   - fields: The authentication fields
-  public init(title: String, message: String? = nil, fields: [Field]) {
-    self.title = title
+  /// Creates an authentication form. `VPNSession` creates these itself; this is for previews
+  /// and tests.
+  public init(
+    name: String? = nil, banner: String? = nil, message: String? = nil, error: String? = nil,
+    fields: [Field]
+  ) {
+    self.name = name
+    self.banner = banner
     self.message = message
+    self.error = error
     self.fields = fields
   }
 }
@@ -65,61 +75,81 @@ public struct AuthenticationForm: Sendable {
 
 extension AuthenticationForm {
   /// A single field in an authentication form.
-  public struct Field: Sendable {
+  public struct Field: Hashable, Identifiable, Sendable {
     // MARK: - Properties
 
-    /// The field identifier.
+    /// The field's name, as the server knows it, for example `"username"`. The filled-in value
+    /// is sent back under this name.
     public let id: String
 
-    /// The label to display to the user.
+    /// The label to show, as the server provides it, for example "Username:".
     public let label: String
 
     /// What kind of field this is (text, password, etc.).
     public let kind: Kind
 
-    /// The current value of the field.
+    /// The field's value. Pre-filled where the server or openconnect provides one, such as a
+    /// select field's default choice.
     public var value: String
 
-    /// Whether this field is required.
-    public let isRequired: Bool
+    /// Whether the server expects digits only, for example for a one-time code.
+    public let isNumeric: Bool
+
+    /// Whether this is the server's group selector ("GROUP:").
+    ///
+    /// Each group can ask for different things, so choosing a different group makes the server
+    /// send that group's form. Submit the form as soon as the user picks another group (the
+    /// other values are not needed yet); the group's form then arrives as the next prompt.
+    public let isAuthGroup: Bool
 
     // MARK: - Initialization
 
-    /// Creates an authentication field.
-    ///
-    /// - Parameters:
-    ///   - id: The field identifier
-    ///   - label: The label to display to the user
-    ///   - kind: What kind of field this is
-    ///   - value: The current field value (default: empty string)
-    ///   - isRequired: Whether the field is required (default: `true`)
+    /// Creates an authentication field. `VPNSession` creates these itself; this is for
+    /// previews and tests.
     public init(
-      id: String, label: String, kind: Kind, value: String = "", isRequired: Bool = true
+      id: String, label: String, kind: Kind, value: String = "", isNumeric: Bool = false,
+      isAuthGroup: Bool = false
     ) {
       self.id = id
       self.label = label
       self.kind = kind
       self.value = value
-      self.isRequired = isRequired
+      self.isNumeric = isNumeric
+      self.isAuthGroup = isAuthGroup
     }
 
     // MARK: - Kind
 
     /// The kind of authentication field.
-    public enum Kind: Sendable {
+    public enum Kind: Hashable, Sendable {
       /// Regular text input.
       case text
 
       /// Password input (should be hidden from display).
       case password
 
-      /// Hidden field (pre-filled, not shown to user).
+      /// A value the server or openconnect sets. Not shown to the user, and sent back
+      /// unchanged whatever `value` says.
       case hidden
 
-      /// Select/dropdown field with options.
-      ///
-      /// - Parameter options: Available options for selection
-      case select(options: [String])
+      /// A choice from a fixed list. Set `value` to one of the choices' `value`s.
+      case select(choices: [Choice])
+    }
+
+    // MARK: - Choice
+
+    /// One option of a `.select` field.
+    public struct Choice: Hashable, Sendable {
+      /// What's sent to the server when this choice is selected.
+      public let value: String
+
+      /// What to show the user.
+      public let label: String
+
+      public init(value: String, label: String) {
+        self.value = value
+        self.label = label
+      }
     }
   }
 }

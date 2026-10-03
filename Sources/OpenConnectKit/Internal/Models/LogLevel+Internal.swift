@@ -5,27 +5,38 @@
 //  Internal C interop extensions for LogLevel
 //
 
+import COpenConnect
 import Foundation
+import os
 
 extension LogLevel {
-  // Convert from OpenConnect C log level (0-3); unknown levels map to info
+  // Convert from openconnect's PRG_* level; unknown levels map to info
   internal init(openConnectLevel: CInt) {
     switch openConnectLevel {
-    case 0: self = .error
-    case 1: self = .info
-    case 2: self = .debug
-    case 3: self = .trace
+    case PRG_ERR: self = .error
+    case PRG_INFO: self = .info
+    case PRG_DEBUG: self = .debug
+    case PRG_TRACE: self = .trace
     default: self = .info
     }
   }
 
-  // Convert to OpenConnect C log level (0-3)
-  internal var openConnectLevel: Int32 {
+  // Convert to openconnect's PRG_* level. Also defines the order of `Comparable`.
+  internal var openConnectLevel: CInt {
     switch self {
-    case .error: return 0
-    case .info: return 1
-    case .debug: return 2
-    case .trace: return 3
+    case .error: PRG_ERR
+    case .info: PRG_INFO
+    case .debug: PRG_DEBUG
+    case .trace: PRG_TRACE
+    }
+  }
+
+  // The matching level in the system log
+  internal var osLogType: OSLogType {
+    switch self {
+    case .error: .error
+    case .info: .info
+    case .debug, .trace: .debug
     }
   }
 }

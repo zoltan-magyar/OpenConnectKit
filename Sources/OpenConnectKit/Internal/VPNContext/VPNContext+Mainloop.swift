@@ -27,8 +27,8 @@ extension VPNContext {
       // honour it anyway.
       ret = openconnect_mainloop(
         vpnInfo,
-        configuration.reconnectTimeout,
-        configuration.reconnectInterval
+        configuration.reconnectTimeout.wholeSeconds,
+        configuration.reconnectInterval.wholeSeconds
       )
     } while ret == 0
 
@@ -51,5 +51,12 @@ extension VPNContext {
       return .connectionLost(
         reason: callbacks.lastErrorMessage ?? String(cString: strerror(-ret)))
     }
+  }
+}
+
+extension Duration {
+  /// The whole seconds openconnect's C API takes, clamped to `CInt`.
+  fileprivate var wholeSeconds: CInt {
+    CInt(clamping: components.seconds)
   }
 }
