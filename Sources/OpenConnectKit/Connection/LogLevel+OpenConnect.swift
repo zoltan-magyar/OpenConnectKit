@@ -1,8 +1,8 @@
 //
-//  LogLevel+Internal.swift
+//  LogLevel+OpenConnect.swift
 //  OpenConnectKit
 //
-//  Internal C interop extensions for LogLevel
+//  Conversion between LogLevel and openconnect's PRG_* levels
 //
 
 import COpenConnect

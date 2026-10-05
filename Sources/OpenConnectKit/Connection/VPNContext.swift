@@ -7,7 +7,6 @@
 
 import COpenConnect
 import Foundation
-import Synchronization
 
 // Owns one openconnect connection (`vpninfo`) for its whole life.
 //
@@ -47,126 +46,6 @@ internal final class VPNContext: Sendable {
     /// The connection ended. `nil` if it ended because of `cancel()`; `.cancelled` if it was
     /// cancelled before it was established. Always the last element.
     case finished(VPNError?)
-  }
-
-  /// How the context reaches its owner. The owner creates it; the C callbacks reach it through
-  /// their `privdata` pointer. Everything here is called on the connection thread.
-  ///
-  /// It's a separate object so it can exist before `openconnect_vpninfo_new()` is called,
-  /// which needs the pointer; that is what lets `vpnInfo` be a `let`. It has to be a class,
-  /// because C holds on to its address. VPNContext keeps it alive for as long as `vpnInfo`
-  /// exists.
-  internal final class Callbacks: Sendable {
-    /// Blocks until the form is filled in. Returning `nil` cancels the connection.
-    internal let authenticate: @Sendable (AuthenticationForm) -> AuthenticationForm?
-
-    /// Blocks until a decision is made. Returning `true` accepts the certificate.
-    internal let validateCertificate: @Sendable (CertificateInfo) -> Bool
-
-    /// Receives every log message. Called often, so it shouldn't block.
-    internal let log: @Sendable (LogLevel, String) -> Void
-
-    /// Receives traffic statistics, in reply to `requestStats()`.
-    ///
-    /// Not ordered with `lifecycle`: a reply can still come in after `.finished` has been
-    /// reported, and the owner has to ignore it then.
-    internal let stats: @Sendable (VPNStats) -> Void
-
-    /// The owner reads the connection's progress from this. Finishes after `.finished`.
-    internal let lifecycle: AsyncStream<Lifecycle>
-
-    private let lifecycleContinuation: AsyncStream<Lifecycle>.Continuation
-
-    // State the C callbacks record, so a failing step can be reported for what it really was.
-    // Written and read on the connection thread, except `cancelled`, which `cancel()` sets
-    // from another thread.
-
-    /// Set by `cancel()`, and when the auth handler cancels.
-    private let cancelled = Atomic<Bool>(false)
-
-    /// Set when the certificate handler rejects the server's certificate.
-    private let certificateRejected = Atomic<Bool>(false)
-
-    /// openconnect's first and most recent error messages (`PRG_ERR`) since
-    /// `clearErrorMessages()`.
-    private let recordedErrorMessages = Mutex<(first: String?, last: String?)>((nil, nil))
-
-    /// openconnect's connection state, for the certificate callback, which reads the server's
-    /// certificate. `VPNContext.init` attaches it right after `openconnect_vpninfo_new()`, before
-    /// anything can call back; after that it's only read, on the connection thread (starting the
-    /// thread orders that read after the write). Not usable once the context is gone.
-    nonisolated(unsafe) internal private(set) var vpnInfo: OpaquePointer?
-
-    internal init(
-      authenticate: @escaping @Sendable (AuthenticationForm) -> AuthenticationForm?,
-      validateCertificate: @escaping @Sendable (CertificateInfo) -> Bool,
-      log: @escaping @Sendable (LogLevel, String) -> Void,
-      stats: @escaping @Sendable (VPNStats) -> Void
-    ) {
-      self.authenticate = authenticate
-      self.validateCertificate = validateCertificate
-      self.log = log
-      self.stats = stats
-      let (stream, continuation) = AsyncStream.makeStream(of: Lifecycle.self)
-      self.lifecycle = stream
-      self.lifecycleContinuation = continuation
-    }
-
-    /// Reports the connection's progress to the owner.
-    internal func report(_ event: Lifecycle) {
-      lifecycleContinuation.yield(event)
-    }
-
-    /// Ends `lifecycle`. Called once the connection is over.
-    internal func finishLifecycle() {
-      lifecycleContinuation.finish()
-    }
-
-    internal var isCancelled: Bool {
-      cancelled.load(ordering: .sequentiallyConsistent)
-    }
-
-    internal func markCancelled() {
-      cancelled.store(true, ordering: .sequentiallyConsistent)
-    }
-
-    internal var isCertificateRejected: Bool {
-      certificateRejected.load(ordering: .sequentiallyConsistent)
-    }
-
-    internal func markCertificateRejected() {
-      certificateRejected.store(true, ordering: .sequentiallyConsistent)
-    }
-
-    /// Usually the cause: openconnect logs it before its consequences, for example
-    /// "getaddrinfo failed for host …" before "Failed to open HTTPS connection to …".
-    internal var firstErrorMessage: String? {
-      recordedErrorMessages.withLock { $0.first }
-    }
-
-    internal var lastErrorMessage: String? {
-      recordedErrorMessages.withLock { $0.last }
-    }
-
-    internal func recordErrorMessage(_ message: String) {
-      recordedErrorMessages.withLock {
-        if $0.first == nil { $0.first = message }
-        $0.last = message
-      }
-    }
-
-    internal func clearErrorMessages() {
-      recordedErrorMessages.withLock { $0 = (nil, nil) }
-    }
-
-    internal func attach(_ vpnInfo: OpaquePointer) {
-      self.vpnInfo = vpnInfo
-    }
-
-    /// Recovers the object from a C callback's `privdata`.
-    internal static func from(_ privdata: UnsafeMutableRawPointer) -> Callbacks {
-      Unmanaged<Callbacks>.fromOpaque(privdata).takeUnretainedValue()
-    }
   }
 
   internal enum Command: UInt8 {

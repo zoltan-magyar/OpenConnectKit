@@ -29,7 +29,8 @@ let package = Package(
       dependencies: ["COpenConnect"],
       // LEGACY: the vpnc-scripts submodule only exists to bundle `vpnc-script` for
       // `openconnect_setup_tun_device()`. Remove the submodule, these excludes, the resource
-      // below and `bundledVpncScriptPath()` once TUN setup is implemented in Swift (see ROADMAP.md).
+      // below and `Connection/VPNContext+VpncScript.swift` once TUN setup is implemented in
+      // Swift (see ROADMAP.md).
       exclude: [
         "Resources/vpnc-scripts/COPYING",
         "Resources/vpnc-scripts/netunshare.c",

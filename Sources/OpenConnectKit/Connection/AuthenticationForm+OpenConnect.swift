@@ -1,8 +1,8 @@
 //
-//  AuthenticationForm+Internal.swift
+//  AuthenticationForm+OpenConnect.swift
 //  OpenConnectKit
 //
-//  Internal C interop extensions for AuthenticationForm
+//  Conversion between AuthenticationForm and openconnect's oc_auth_form
 //
 
 import COpenConnect

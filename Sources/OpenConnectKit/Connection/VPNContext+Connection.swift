@@ -68,7 +68,7 @@ extension VPNContext {
     }
 
     begin(.configuringNetwork)
-    try setupTunDevice()
+    try setupTunDevice()  // LEGACY, see VPNContext+VpncScript.swift
   }
 
   /// Reports that a step started, and forgets error messages from earlier steps, so a failure
@@ -87,25 +87,5 @@ extension VPNContext {
       serverAddress: openconnect_get_hostname(vpnInfo).map { String(cString: $0) },
       connectedAt: Date()
     )
-  }
-
-  /// Sets up the TUN device for the VPN connection.
-  ///
-  /// This finds the vpnc-script and configures the TUN device.
-  /// Must be called after DTLS setup and before starting the mainloop.
-  ///
-  /// - Throws: `VPNError` if TUN setup fails
-  private func setupTunDevice() throws(VPNError) {
-    guard let vpncScriptPath = findVpncScript() else {
-      throw .networkConfigurationFailed(reason: "vpnc-script not found, or not executable")
-    }
-
-    // openconnect copies both strings, so Swift's temporary C strings are enough.
-    guard
-      openconnect_setup_tun_device(vpnInfo, vpncScriptPath, configuration.interfaceName) == 0
-    else {
-      throw .networkConfigurationFailed(
-        reason: errorMessage(or: "Could not set up the tunnel interface"))
-    }
   }
 }
