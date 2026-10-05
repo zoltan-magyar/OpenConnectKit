@@ -11,7 +11,10 @@ import Foundation
 ///
 /// Controls the verbosity of logging output from the VPN session.
 /// Higher levels include messages from lower levels (e.g., `.debug` includes `.info` and `.error`).
-public enum LogLevel: String, Sendable {
+///
+/// Levels compare by verbosity, `.error < .info < .debug < .trace`, so
+/// `entries.filter { $0.level <= .info }` keeps errors and informational messages.
+public enum LogLevel: String, Codable, Sendable, CaseIterable, Comparable {
   /// Error messages only - critical issues that prevent operation.
   case error
 
@@ -21,6 +24,11 @@ public enum LogLevel: String, Sendable {
   /// Debug messages - detailed information for troubleshooting.
   case debug
 
-  /// Verbose trace messages - extremely detailed execution flow.
+  /// Verbose trace messages - extremely detailed execution flow, including the HTTP traffic of
+  /// the login, credentials and all.
   case trace
+
+  public static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
+    lhs.openConnectLevel < rhs.openConnectLevel
+  }
 }

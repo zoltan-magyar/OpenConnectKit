@@ -35,7 +35,7 @@ brew install autoconf automake libtool pkg-config
 
 This clones OpenSSL and OpenConnect, builds both for arm64, and packages everything into `Frameworks/OpenConnectC.xcframework`. The first run takes a few minutes.
 
-OpenConnect comes from the tag `swiftconnect-1` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`. The build switches back to upstream once a release includes it.
+OpenConnect comes from the tag `swiftconnect-2` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`, and [!667](https://gitlab.com/openconnect/openconnect/-/merge_requests/667), which adds `openconnect_set_reconnecting_handler()`. The build switches back to upstream once a release includes them.
 
 **3. Build the Swift package:**
 
@@ -67,7 +67,7 @@ To build other versions without editing `xcframework.env`:
 
 ```bash
 OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh --clean
-OPENCONNECT_VERSION=swiftconnect-2 ./Scripts/build-xcframework.sh --clean
+OPENCONNECT_VERSION=swiftconnect-1 ./Scripts/build-xcframework.sh --clean
 OPENCONNECT_REPO=https://gitlab.com/openconnect/openconnect.git OPENCONNECT_VERSION=v9.22 ./Scripts/build-xcframework.sh --clean
 ```
 
@@ -76,18 +76,20 @@ OPENCONNECT_REPO=https://gitlab.com/openconnect/openconnect.git OPENCONNECT_VERS
 ```swift
 import OpenConnectKit
 
-let handler = MyVpnHandler()  // implements VpnSessionDelegate
-let session = VpnSession(delegate: handler)
+let prompts = VPNPrompts()  // answers auth and certificate prompts, observable for SwiftUI
+let session = VPNSession(delegate: prompts)
 
-let config = VpnConfiguration(
+let config = VPNConfiguration(
     serverURL: URL(string: "https://vpn.example.com")!,
     vpnProtocol: .anyConnect,
     logLevel: .info
 )
 
-try await session.connect(configuration: config)
+try await session.connect(using: config)
 ```
 
-`VpnSession` is `@Observable` — bind `session.status`, `session.stats`, and `session.interfaceName` directly in SwiftUI. Consume logs via `session.logs` (an `AsyncStream<LogEntry>`).
+`VPNSession` is `@Observable` — bind `session.status`, `session.lastError` and `session.stats` directly in SwiftUI. While connected, `status` is `.connected(ConnectionInfo)`, which carries the tunnel's interface name and the server; while connecting, `.connecting(ConnectionStage)` says which step is running. Consume logs via `session.logs` (an `AsyncStream<LogEntry>`; each access returns a new stream, so several readers can follow along).
 
-See `VpnSessionDelegate` for handling authentication prompts and certificate validation.
+`connect(using:)` returns once the tunnel is up, and throws a `VPNError` (typed throws) otherwise; the error is also kept in `lastError`, with openconnect's own explanation where it has one. Cancelling the task that called it, or calling `disconnect()`, cancels a connection attempt; `connect` then throws `VPNError.cancelled`. `disconnect()` is `async` and returns once the connection has been shut down, so switching servers is `await session.disconnect()` followed by `connect(using:)`.
+
+Authentication forms and untrusted certificates are answered by the session's `VPNSessionDelegate`, which the session keeps alive. `VPNPrompts` is a ready-made one for SwiftUI: bind `.sheet(item: $prompts.pendingAuthentication)` and `.alert(isPresented: $prompts.isCertificatePending)`, and answer with `submit(_:)`, `acceptCertificate()` and so on. Implement the protocol yourself for anything else, such as a command-line tool. If the connection attempt is cancelled while a prompt is waiting, the prompt is withdrawn.
