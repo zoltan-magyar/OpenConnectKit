@@ -1,8 +1,8 @@
 //
-//  CertificateInfo+Internal.swift
+//  CertificateInfo+OpenConnect.swift
 //  OpenConnectKit
 //
-//  Internal C interop extensions for CertificateInfo
+//  Building CertificateInfo from openconnect's peer certificate
 //
 
 import COpenConnect
