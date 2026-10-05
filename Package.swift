@@ -5,8 +5,8 @@ import PackageDescription
 // The released XCFramework (openconnect + OpenSSL). The release workflow replaces
 // both values when it publishes a new version.
 let releaseURL =
-  "https://github.com/zoltan-magyar/OpenConnectKit/releases/download/v0.1.0/OpenConnectC.xcframework.zip"
-let releaseChecksum = "c8aa1e2f38518932c31d93bdd388bb1ea7b5c287de5061d8ad72e28730c4b9ec"
+  "https://github.com/zoltan-magyar/OpenConnectKit/releases/download/v0.2.0/OpenConnectC.xcframework.zip"
+let releaseChecksum = "69aa28639d42c17254ad595a6991f8892a4c17eaf52ce7c1e187a3ee7b11d2d3"
 
 // A local build from Scripts/build-xcframework.sh takes precedence over the release.
 // Frameworks/ is gitignored, so a checkout from Git always uses the release.
