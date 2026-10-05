@@ -37,6 +37,10 @@ internal final class VPNContext: Sendable {
     /// The tunnel is up and the mainloop is starting.
     case established(ConnectionInfo)
 
+    /// openconnect lost the connection and is about to try to re-establish it. Reported before
+    /// each attempt, so there can be several before `.reconnected` or `.finished`.
+    case reconnecting
+
     /// openconnect re-established the connection after losing it.
     case reconnected
 
@@ -237,6 +241,7 @@ internal final class VPNContext: Sendable {
       throw .internalError(reason: "Could not create the command pipe")
     }
 
+    openconnect_set_reconnecting_handler(vpnInfo, reconnectingCallback)
     openconnect_set_reconnected_handler(vpnInfo, reconnectedCallback)
     openconnect_set_stats_handler(vpnInfo, statsCallback)
 

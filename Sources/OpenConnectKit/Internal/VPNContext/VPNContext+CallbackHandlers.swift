@@ -89,6 +89,16 @@ internal func processAuthFormCallback(
   return filledForm.apply(to: form)
 }
 
+/// C callback before each attempt to re-establish a lost connection.
+/// Registered with `openconnect_set_reconnecting_handler()`.
+internal func reconnectingCallback(privdata: UnsafeMutableRawPointer?) {
+  guard let privdata = privdata else {
+    return
+  }
+
+  VPNContext.Callbacks.from(privdata).report(.reconnecting)
+}
+
 /// C callback when reconnection succeeds.
 internal func reconnectedCallback(privdata: UnsafeMutableRawPointer?) {
   guard let privdata = privdata else {

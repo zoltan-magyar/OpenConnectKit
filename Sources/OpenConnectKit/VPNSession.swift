@@ -252,6 +252,13 @@ public final class VPNSession {
       connectContinuation?.resume(returning: .success(()))
       connectContinuation = nil
 
+    case .reconnecting:
+      // Reported before every attempt, so only the first one changes anything. After
+      // disconnect(), the status stays .disconnecting.
+      if case .connected(let info) = status {
+        status = .reconnecting(info)
+      }
+
     case .reconnected:
       if case .reconnecting(let info) = status {
         status = .connected(info)

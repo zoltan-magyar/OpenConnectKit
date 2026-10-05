@@ -14,8 +14,8 @@ extension VPNContext {
   /// Runs openconnect's mainloop on the connection thread until the connection ends.
   ///
   /// The mainloop handles all VPN traffic, and reconnects by itself when the connection drops,
-  /// for up to `reconnectTimeout`. Each successful reconnect calls `reconnectedCallback`; there
-  /// is no callback for when a reconnect starts.
+  /// for up to `reconnectTimeout`. It calls `reconnectingCallback` before each attempt and
+  /// `reconnectedCallback` once one succeeds.
   ///
   /// - Returns: Why the connection ended, or `nil` if it ended because of `cancel()`.
   internal func runMainloop() -> VPNError? {

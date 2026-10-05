@@ -37,12 +37,14 @@ public enum ConnectionStatus: Hashable, Sendable {
   /// The tunnel is up.
   case connected(ConnectionInfo)
 
-  /// The connection was lost and openconnect is trying to re-establish it. The tunnel's
-  /// details stay valid meanwhile.
+  /// The connection was lost and openconnect is trying to re-establish it, for up to
+  /// `VPNConfiguration.reconnectTimeout`. The tunnel's details stay valid meanwhile, but no
+  /// traffic gets through. Ends in `.connected` again, or in `.disconnected` if it gives up.
   ///
-  /// - Note: Not reported yet. openconnect reconnects inside its mainloop and only says so once
-  ///   a reconnect has succeeded, so until it can also report the start of one, the status
-  ///   stays `.connected` during an outage.
+  /// - Note: This starts when openconnect notices the connection is gone: right away if the
+  ///   server closes it, but if the network just goes quiet, only once the server has stopped
+  ///   answering for twice its dead peer detection interval. Until then the status stays
+  ///   `.connected`.
   case reconnecting(ConnectionInfo)
 
   /// The connection is being shut down. The status becomes `.disconnected` once that's done.

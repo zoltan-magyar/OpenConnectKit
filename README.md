@@ -35,7 +35,7 @@ brew install autoconf automake libtool pkg-config
 
 This clones OpenSSL and OpenConnect, builds both for arm64, and packages everything into `Frameworks/OpenConnectC.xcframework`. The first run takes a few minutes.
 
-OpenConnect comes from the tag `swiftconnect-1` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`. The build switches back to upstream once a release includes it.
+OpenConnect comes from the tag `swiftconnect-2` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`, and [!667](https://gitlab.com/openconnect/openconnect/-/merge_requests/667), which adds `openconnect_set_reconnecting_handler()`. The build switches back to upstream once a release includes them.
 
 **3. Build the Swift package:**
 
@@ -67,7 +67,7 @@ To build other versions without editing `xcframework.env`:
 
 ```bash
 OPENSSL_VERSION=3.5.1 ./Scripts/build-xcframework.sh --clean
-OPENCONNECT_VERSION=swiftconnect-2 ./Scripts/build-xcframework.sh --clean
+OPENCONNECT_VERSION=swiftconnect-1 ./Scripts/build-xcframework.sh --clean
 OPENCONNECT_REPO=https://gitlab.com/openconnect/openconnect.git OPENCONNECT_VERSION=v9.22 ./Scripts/build-xcframework.sh --clean
 ```
 
