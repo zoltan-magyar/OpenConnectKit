@@ -1,6 +1,6 @@
 name: Build XCFramework
 description: >
-  Builds Frameworks/OpenConnectC.xcframework with Scripts/build-xcframework.sh,
+  Builds Frameworks/COpenConnect.xcframework with Scripts/build-xcframework.sh,
   caching the OpenSSL and openconnect builds. Package.swift picks the result up
   automatically.
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds OpenConnectC.xcframework — a static arm64 XCFramework bundling
+# Builds COpenConnect.xcframework — a static arm64 XCFramework bundling
 # openconnect + OpenSSL (libssl + libcrypto) for use by OpenConnectKit.
 #
 # Prerequisites (all via Homebrew):
@@ -22,7 +22,7 @@ OPENSSL_OUT="$BUILD_DIR/openssl-arm64"
 OC_SRC="$BUILD_DIR/openconnect-src"
 OC_OUT="$BUILD_DIR/openconnect-arm64"
 MERGED_OUT="$BUILD_DIR/merged"
-XCFRAMEWORK_OUT="$KIT_ROOT/Frameworks/OpenConnectC.xcframework"
+XCFRAMEWORK_OUT="$KIT_ROOT/Frameworks/COpenConnect.xcframework"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Sources and versions are in xcframework.env (shared with the release

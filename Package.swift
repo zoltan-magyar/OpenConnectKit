@@ -10,7 +10,7 @@ let releaseChecksum = "69aa28639d42c17254ad595a6991f8892a4c17eaf52ce7c1e187a3ee7
 
 // A local build from Scripts/build-xcframework.sh takes precedence over the release.
 // Frameworks/ is gitignored, so a checkout from Git always uses the release.
-let localXCFramework = "Frameworks/OpenConnectC.xcframework"
+let localXCFramework = "Frameworks/COpenConnect.xcframework"
 let cOpenConnect: Target =
   FileManager.default.fileExists(atPath: "\(Context.packageDirectory)/\(localXCFramework)")
   ? .binaryTarget(name: "COpenConnect", path: localXCFramework)

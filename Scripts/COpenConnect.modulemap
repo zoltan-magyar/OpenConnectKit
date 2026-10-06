@@ -1,4 +1,4 @@
-// Module map for OpenConnectC.xcframework, copied into its Headers/ as
+// Module map for COpenConnect.xcframework, copied into its Headers/ as
 // module.modulemap by build-xcframework.sh. It lets Swift `import COpenConnect`
 // (the binary target in Package.swift) and declares the system libraries the
 // static archive needs, so anything importing the module links them automatically.

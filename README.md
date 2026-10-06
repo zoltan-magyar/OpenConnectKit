@@ -33,7 +33,7 @@ brew install autoconf automake libtool pkg-config
 ./Scripts/build-xcframework.sh
 ```
 
-This clones OpenSSL and OpenConnect, builds both for arm64, and packages everything into `Frameworks/OpenConnectC.xcframework`. The first run takes a few minutes.
+This clones OpenSSL and OpenConnect, builds both for arm64, and packages everything into `Frameworks/COpenConnect.xcframework`. The first run takes a few minutes.
 
 OpenConnect comes from the tag `swiftconnect-2` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`, and [!667](https://gitlab.com/openconnect/openconnect/-/merge_requests/667), which adds `openconnect_set_reconnecting_handler()`. The build switches back to upstream once a release includes them.
 
@@ -43,7 +43,7 @@ OpenConnect comes from the tag `swiftconnect-2` on [a fork](https://gitlab.com/z
 swift build
 ```
 
-`Package.swift` uses `Frameworks/OpenConnectC.xcframework` whenever it exists, instead of the release. Delete `Frameworks/` to go back to the release.
+`Package.swift` uses `Frameworks/COpenConnect.xcframework` whenever it exists, instead of the release. Delete `Frameworks/` to go back to the release.
 
 ### Build configuration
 

@@ -39,12 +39,12 @@ jobs:
       - name: Package XCFramework
         run: |
           cd Frameworks
-          zip -r ../OpenConnectC.xcframework.zip OpenConnectC.xcframework
+          zip -r ../COpenConnect.xcframework.zip COpenConnect.xcframework
 
       - name: Compute checksum
         id: checksum
         run: |
-          echo "value=$(swift package compute-checksum OpenConnectC.xcframework.zip)" >> $GITHUB_OUTPUT
+          echo "value=$(swift package compute-checksum COpenConnect.xcframework.zip)" >> $GITHUB_OUTPUT
 
       # The release starts as a draft and is only published at the end, after
       # Package.swift and the tag are final: with immutable releases, publishing
@@ -54,7 +54,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ASSET="OpenConnectC.xcframework.zip#OpenConnectC.xcframework.zip"
+          ASSET="COpenConnect.xcframework.zip#COpenConnect.xcframework.zip"
           if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
             # Left over from a failed run: replace the zip with this build's.
             gh release upload "$TAG" "$ASSET" --clobber
@@ -70,7 +70,7 @@ jobs:
         env:
           CHECKSUM: ${{ steps.checksum.outputs.value }}
         run: |
-          URL="https://github.com/${REPO}/releases/download/${TAG}/OpenConnectC.xcframework.zip"
+          URL="https://github.com/${REPO}/releases/download/${TAG}/COpenConnect.xcframework.zip"
           # Replaces the string literals of `releaseURL` and `releaseChecksum`.
           sed -i '' -E \
             -e "s|\"https://github.com/[^\"]+/releases/download/[^\"]+\"|\"${URL}\"|" \
