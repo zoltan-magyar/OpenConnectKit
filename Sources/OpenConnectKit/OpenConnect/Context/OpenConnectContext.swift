@@ -8,21 +8,25 @@
 import COpenConnect
 import Foundation
 
-// Owns one openconnect connection (`vpninfo`) for its whole life.
-//
-// Everything that touches `vpninfo` runs on one dedicated thread, started by `start()`:
-// authentication, CSTP, DTLS, TUN setup and then the mainloop. openconnect isn't thread-safe;
-// the only channel it supports from other threads is the command pipe, so `cancel()` and
-// `requestStats()` are the only calls other threads make. The thread reports back through the
-// owner's `OpenConnectContextDelegate` (asked from openconnect's C callbacks, see
-// `OpenConnectCallbacks.swift`), and the connection's progress through `lifecycle`, in order.
-//
-// It's a thread and not `Task.detached` because every one of those calls blocks: on network
-// I/O, for as long as the user takes to fill in an auth form, and in the mainloop for the
-// whole session. Swift's cooperative thread pool expects its threads never to block.
-//
-// `vpnInfo` is freed in `deinit`, which can only run once both the owner and the connection
-// thread have let go, so nothing can be using it any more.
+/// Owns one openconnect connection (`vpninfo`) for its whole life.
+///
+/// The object that creates a context is its owner (`VPNSession` today), and also its delegate
+/// (`OpenConnectContextDelegate`): it answers openconnect's questions and receives the logs and
+/// statistics. The owner reads the connection's progress from `lifecycle`.
+///
+/// Everything that touches `vpninfo` runs on one dedicated thread, started by `start()`:
+/// authentication, CSTP, DTLS, TUN setup and then the mainloop. openconnect isn't thread-safe;
+/// the only channel it supports from other threads is the command pipe, so `cancel()` and
+/// `requestStats()` are the only calls other threads make. The thread calls the delegate from
+/// openconnect's C callbacks (`OpenConnectCallbacks.swift`), and reports the connection's
+/// progress through `lifecycle`, in order.
+///
+/// It's a thread and not `Task.detached` because every one of those calls blocks: on network
+/// I/O, for as long as the user takes to fill in an auth form, and in the mainloop for the
+/// whole session. Swift's cooperative thread pool expects its threads never to block.
+///
+/// `vpnInfo` is freed in `deinit`, which can only run once both the owner and the connection
+/// thread have let go, so nothing can be using it any more.
 internal final class OpenConnectContext: Sendable {
   // MARK: - Types
 
@@ -49,19 +53,32 @@ internal final class OpenConnectContext: Sendable {
     case finished(VPNError?)
   }
 
+  /// Commands for openconnect's command pipe (`OC_CMD_*`), written to `commandPipe`.
+  ///
+  /// openconnect.h defines them as character literals (`'x'`, ...), which Swift doesn't import.
   internal enum Command: UInt8 {
-    // openconnect.h defines these as character literals ('x', ...), which Swift doesn't import.
     case cancel = 0x78  // 'x'
     case pause = 0x70  // 'p'
     case detach = 0x64  // 'd'
     case stats = 0x73  // 's'
+
+    /// Writes the command to the write end of openconnect's command pipe. Safe to call from any
+    /// thread.
+    ///
+    /// The pipe stays open until `vpninfo` is freed, in the context's `deinit`, so this is safe
+    /// even after the connection has ended: the byte is simply never read.
+    internal func send(to commandPipe: Int32) {
+      var byte = rawValue
+      // Nonblocking, and only ever holds a few bytes, so a failed write isn't worth reporting.
+      _ = write(commandPipe, &byte, 1)
+    }
   }
 
   // MARK: - Properties
 
   internal let configuration: VPNConfiguration
 
-  /// What openconnect's C callbacks work with, including the owner as delegate.
+  /// What openconnect's C callbacks work with, including the delegate.
   internal let state: CallbackState
 
   /// openconnect's connection state. Only the connection thread uses it, apart from `init` and
@@ -75,7 +92,8 @@ internal final class OpenConnectContext: Sendable {
 
   /// Creates the openconnect state for a connection. Nothing connects until `start()`.
   ///
-  /// - Parameter delegate: The owner, held weakly; it answers openconnect's questions.
+  /// - Parameter delegate: Answers openconnect's questions and receives the logs and statistics.
+  ///   Held weakly, because it's normally the owner, which holds the context.
   /// - Throws: `VPNError` if openconnect can't be set up, or the server URL is invalid.
   internal init(
     configuration: VPNConfiguration, delegate: any OpenConnectContextDelegate
@@ -100,10 +118,18 @@ internal final class OpenConnectContext: Sendable {
       throw .internalError(reason: "Could not create the openconnect session")
     }
 
-    state.attach(vpnInfo)
+    // Right away, so the callbacks get it together with vpnInfo: the certificate callback writes
+    // to it when the delegate rejects a certificate.
+    let commandPipe = openconnect_setup_cmd_pipe(vpnInfo)
+    guard commandPipe >= 0 else {
+      openconnect_vpninfo_free(vpnInfo)
+      throw .internalError(reason: "Could not create the command pipe")
+    }
+
+    state.attach(vpnInfo, commandPipe: commandPipe)
 
     // Every server certificate must reach the certificate callback, which asks the system
-    // (SystemTrust) and then the owner, so OpenSSL must never accept one on its own. With system
+    // (SystemTrust) and then the delegate, so OpenSSL must never accept one on its own. With system
     // trust on, it would trust any CA in its compiled-in OPENSSLDIR (a path on the build
     // machine) or in the files that SSL_CERT_FILE and SSL_CERT_DIR name, and the callback would
     // never be called.
@@ -125,12 +151,6 @@ internal final class OpenConnectContext: Sendable {
       openconnect_vpninfo_free(vpnInfo)
       throw .invalidConfiguration(
         reason: state.firstErrorMessage ?? "Could not parse the server URL")
-    }
-
-    let commandPipe = openconnect_setup_cmd_pipe(vpnInfo)
-    guard commandPipe >= 0 else {
-      openconnect_vpninfo_free(vpnInfo)
-      throw .internalError(reason: "Could not create the command pipe")
     }
 
     openconnect_set_reconnecting_handler(vpnInfo, reconnectingCallback)

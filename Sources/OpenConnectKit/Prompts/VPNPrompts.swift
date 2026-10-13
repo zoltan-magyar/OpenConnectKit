@@ -46,7 +46,8 @@ import Foundation
 ///
 /// Server certificates the system trusts are accepted without a prompt; only the others become a
 /// `pendingCertificate`. To decide about trusted certificates too, implement
-/// `VPNSessionDelegate` yourself.
+/// `VPNSessionDelegate` yourself. The session doesn't ask about a certificate the user already
+/// accepted in the same connection, so re-establishing a lost connection doesn't prompt again.
 ///
 /// If the connection attempt is cancelled while a prompt is pending, the prompt is withdrawn:
 /// its property becomes `nil`, so a sheet or alert bound to it closes.
@@ -108,8 +109,8 @@ public final class VPNPrompts: VPNSessionDelegate {
     resolveCertificate(with: true)
   }
 
-  /// Rejects the pending server certificate, which ends the connection attempt with
-  /// `VPNError.certificateRejected`.
+  /// Rejects the pending server certificate, which ends the connection attempt, or the
+  /// connection if it's being re-established, with `VPNError.certificateRejected`.
   public func rejectCertificate() {
     resolveCertificate(with: false)
   }

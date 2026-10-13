@@ -40,8 +40,9 @@ public struct CertificateInfo: Hashable, Sendable {
   /// The certificate's public-key pin in openconnect's format: `pin-sha256:` followed by a
   /// base64 SHA-256 hash. It's the value openconnect's `--servercert` option takes.
   ///
-  /// This is the key for remembering a decision. Store it together with the host name, never on
-  /// its own, and compare it with the next certificate's pin.
+  /// This is the key for remembering a decision; the session already does so within one
+  /// connection. To remember one across connections, store it together with the host name, never
+  /// on its own, and compare it with the next certificate's pin.
   public let pin: String?
 
   /// The certificate in DER encoding. `SecCertificateCreateWithData` turns it into a

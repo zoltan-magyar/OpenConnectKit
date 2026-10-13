@@ -18,21 +18,12 @@ extension OpenConnectContext {
   /// user still has to be answered first. Once established, the mainloop logs off and exits.
   internal func cancel() {
     state.markCancelled()
-    sendCommand(.cancel)
+    Command.cancel.send(to: commandPipe)
   }
 
-  /// Asks the mainloop for traffic statistics, which arrive through the delegate's `didReceive(_:)`.
+  /// Asks the mainloop for traffic statistics, which arrive through the delegate's
+  /// `didReceive(_:)`.
   internal func requestStats() {
-    sendCommand(.stats)
-  }
-
-  /// Writes a command byte to openconnect's command pipe.
-  ///
-  /// The pipe stays open until `deinit`, so this is safe even after the connection has ended:
-  /// the byte is simply never read.
-  private func sendCommand(_ command: Command) {
-    var byte = command.rawValue
-    // Nonblocking, and only ever holds a few bytes, so a failed write isn't worth reporting.
-    _ = write(commandPipe, &byte, 1)
+    Command.stats.send(to: commandPipe)
   }
 }
