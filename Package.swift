@@ -27,10 +27,11 @@ let package = Package(
     .target(
       name: "OpenConnectKit",
       dependencies: ["COpenConnect"],
-      // LEGACY: the vpnc-scripts submodule only exists to bundle `vpnc-script` for
-      // `openconnect_setup_tun_device()`. Remove the submodule, these excludes, the resource
-      // below and `Connection/VPNContext+VpncScript.swift` once TUN setup is implemented in
-      // Swift (see ROADMAP.md).
+      // The vpnc-scripts submodule bundles `vpnc-script` for the vpnc-script tunnel mode
+      // (`openconnect_setup_tun_device()`, in
+      // `OpenConnect/Context/OpenConnectContext+VpncScript.swift`). Plan step 6.6 moves the script
+      // and these excludes into a separate product, so apps that only use the Network Extension
+      // don't ship the GPL script.
       exclude: [
         "Resources/vpnc-scripts/COPYING",
         "Resources/vpnc-scripts/netunshare.c",

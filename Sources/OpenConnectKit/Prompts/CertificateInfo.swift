@@ -7,10 +7,10 @@
 
 import Foundation
 
-/// A server certificate that couldn't be verified, and why.
+/// The server's certificate, and whether the system trusts it.
 ///
-/// Use it in `VPNSessionDelegate.vpnSession(_:shouldAcceptCertificate:)` to decide whether to
-/// accept or reject the certificate.
+/// `VPNSessionDelegate.vpnSession(_:shouldAcceptCertificate:)` gets one for every server, and
+/// uses it to decide whether to accept the certificate.
 ///
 /// ## Example
 ///
@@ -19,18 +19,20 @@ import Foundation
 ///     _ session: VPNSession,
 ///     shouldAcceptCertificate info: CertificateInfo
 /// ) async -> Bool {
+///     guard case .untrusted(let reason) = info.systemTrust else {
+///         return true  // the system trusts it
+///     }
 ///     if let pin = info.pin, trustedPins[info.hostname ?? ""] == pin {
 ///         return true  // accepted before, same certificate
 ///     }
-///     return await askUserToTrust(info)
+///     return await askUserToTrust(info, because: reason)
 /// }
 /// ```
 public struct CertificateInfo: Hashable, Sendable {
   // MARK: - Properties
 
-  /// Why the certificate couldn't be verified, as openconnect reports it, for example
-  /// "self-signed certificate" or "certificate does not match hostname".
-  public let reason: String
+  /// Whether the system trusts the certificate for the server's host name, and if not, why.
+  public let systemTrust: SystemTrust
 
   /// The server's host name.
   public let hostname: String?
@@ -38,8 +40,9 @@ public struct CertificateInfo: Hashable, Sendable {
   /// The certificate's public-key pin in openconnect's format: `pin-sha256:` followed by a
   /// base64 SHA-256 hash. It's the value openconnect's `--servercert` option takes.
   ///
-  /// This is the key for remembering a decision. Store it together with the host name, never on
-  /// its own, and compare it with the next certificate's pin.
+  /// This is the key for remembering a decision; the session already does so within one
+  /// connection. To remember one across connections, store it together with the host name, never
+  /// on its own, and compare it with the next certificate's pin.
   public let pin: String?
 
   /// The certificate in DER encoding. `SecCertificateCreateWithData` turns it into a
@@ -54,10 +57,10 @@ public struct CertificateInfo: Hashable, Sendable {
   /// Creates certificate information. `VPNSession` creates these itself; this is for previews
   /// and tests.
   public init(
-    reason: String, hostname: String? = nil, pin: String? = nil, derData: Data? = nil,
+    systemTrust: SystemTrust, hostname: String? = nil, pin: String? = nil, derData: Data? = nil,
     details: String? = nil
   ) {
-    self.reason = reason
+    self.systemTrust = systemTrust
     self.hostname = hostname
     self.pin = pin
     self.derData = derData

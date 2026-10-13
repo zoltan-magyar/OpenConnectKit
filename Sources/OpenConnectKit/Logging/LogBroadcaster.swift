@@ -8,13 +8,13 @@
 import Foundation
 import Synchronization
 
-// Hands each reader of `VPNSession.logs` its own stream and copies every entry into all of them.
-//
-// An `AsyncStream` supports one reader, and ends for good once that reader's task is cancelled,
-// which happens whenever a SwiftUI `.task` restarts. A stream per reader avoids both.
-//
-// Entries are yielded straight from openconnect's thread, without a hop to the main actor:
-// at trace level there can be a lot of them.
+/// Hands each reader of `VPNSession.logs` its own stream and copies every entry into all of them.
+///
+/// An `AsyncStream` supports one reader, and ends for good once that reader's task is cancelled,
+/// which happens whenever a SwiftUI `.task` restarts. A stream per reader avoids both.
+///
+/// Entries are yielded straight from openconnect's thread, without a hop to the main actor:
+/// at trace level there can be a lot of them.
 internal final class LogBroadcaster: Sendable {
   /// How far a reader can fall behind before its oldest entries are dropped.
   internal static let bufferSize = 1_000

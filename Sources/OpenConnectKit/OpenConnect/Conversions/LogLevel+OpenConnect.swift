@@ -10,7 +10,7 @@ import Foundation
 import os
 
 extension LogLevel {
-  // Convert from openconnect's PRG_* level; unknown levels map to info
+  /// Converts from openconnect's `PRG_*` level; unknown levels map to `.info`.
   internal init(openConnectLevel: CInt) {
     switch openConnectLevel {
     case PRG_ERR: self = .error
@@ -21,7 +21,7 @@ extension LogLevel {
     }
   }
 
-  // Convert to openconnect's PRG_* level. Also defines the order of `Comparable`.
+  /// Converts to openconnect's `PRG_*` level. Also defines the order of `Comparable`.
   internal var openConnectLevel: CInt {
     switch self {
     case .error: PRG_ERR
@@ -31,7 +31,7 @@ extension LogLevel {
     }
   }
 
-  // The matching level in the system log
+  /// The matching level in the system log.
   internal var osLogType: OSLogType {
     switch self {
     case .error: .error

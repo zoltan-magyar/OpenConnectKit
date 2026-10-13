@@ -11,7 +11,7 @@ import Foundation
 // MARK: - Internal C Interop
 
 extension AuthenticationForm {
-  // Create from C oc_auth_form structure
+  /// Creates a form from openconnect's `oc_auth_form`.
   internal init(from cForm: UnsafeMutablePointer<oc_auth_form>) {
     let form = cForm.pointee
     var fields: [Field] = []
@@ -83,10 +83,11 @@ extension AuthenticationForm {
     )
   }
 
-  // Writes the field values back into the C form, matching them to the server's fields by name.
-  // Returns the OC_FORM_RESULT_* code for openconnect: NEWGROUP if the user chose a different
-  // auth group (openconnect then fetches that group's form and asks again), ERR if openconnect
-  // rejects a value, OK otherwise.
+  /// Writes the field values back into the C form, matching them to the server's fields by name.
+  ///
+  /// - Returns: The `OC_FORM_RESULT_*` code for openconnect: `NEWGROUP` if the user chose a
+  ///   different auth group (openconnect then fetches that group's form and asks again), `ERR` if
+  ///   openconnect rejects a value, `OK` otherwise.
   internal func apply(to cForm: UnsafeMutablePointer<oc_auth_form>) -> CInt {
     let form = cForm.pointee
     let values = Dictionary(
@@ -128,7 +129,7 @@ extension AuthenticationForm {
     return groupChanged ? OC_FORM_RESULT_NEWGROUP : OC_FORM_RESULT_OK
   }
 
-  // The choices of a select option: oc_choice.name is what's sent, oc_choice.label is shown.
+  /// The choices of a select option: `oc_choice.name` is what's sent, `oc_choice.label` is shown.
   private static func choices(
     of select: UnsafeMutablePointer<oc_form_opt_select>
   ) -> [Field.Choice] {

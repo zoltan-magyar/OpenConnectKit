@@ -1,8 +1,8 @@
 //
-//  VPNContext+Connection.swift
+//  OpenConnectContext+Connection.swift
 //  OpenConnectKit
 //
-//  Connection management extension for VPNContext
+//  Connection management extension for OpenConnectContext
 //
 
 import COpenConnect
@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Connection Management
 
-extension VPNContext {
+extension OpenConnectContext {
   /// Starts the connection on its own thread. Progress and the outcome arrive in `lifecycle`.
   ///
   /// Call it once. The thread keeps the context alive until the connection has ended.
@@ -25,19 +25,22 @@ extension VPNContext {
 
   /// The connection thread: connects, then runs the mainloop until the connection ends.
   private func run() {
-    defer { callbacks.finishLifecycle() }
+    defer { state.finishLifecycle() }
 
     do {
       try establish()
     } catch {
       // If the user cancelled or rejected the certificate, the step's own error is only a
       // consequence of that.
-      callbacks.report(.finished(userAbort ?? error))
+      state.report(.finished(userAbort ?? error))
       return
     }
+    state.report(.established(connectionInfo()))
 
-    callbacks.report(.established(connectionInfo()))
-    callbacks.report(.finished(runMainloop()))
+    // Blocks for the rest of the session: the mainloop carries the traffic and reconnects by
+    // itself, and only returns once the connection has ended.
+    let error = runMainloop()
+    state.report(.finished(error))
   }
 
   /// Connects to VPN: auth cookie -> CSTP -> DTLS -> TUN setup
@@ -64,18 +67,18 @@ extension VPNContext {
       // Not fatal: the server may not offer DTLS at all ("No DTLS address"). Like openconnect's
       // own client, carry on over TLS, and disable DTLS so reconnects don't keep retrying it.
       openconnect_disable_dtls(vpnInfo)
-      callbacks.log(.info, "DTLS unavailable, using TLS only")
+      state.delegate?.didLog("DTLS unavailable, using TLS only", level: .info)
     }
 
     begin(.configuringNetwork)
-    try setupTunDevice()  // LEGACY, see VPNContext+VpncScript.swift
+    try setupTunDevice()  // LEGACY, see OpenConnectContext+VpncScript.swift
   }
 
   /// Reports that a step started, and forgets error messages from earlier steps, so a failure
   /// is explained by a message from the step that failed.
   private func begin(_ stage: ConnectionStage) {
-    callbacks.clearErrorMessages()
-    callbacks.report(.stage(stage))
+    state.clearErrorMessages()
+    state.report(.stage(stage))
   }
 
   /// The details of the established connection. Read here, on the connection thread, before

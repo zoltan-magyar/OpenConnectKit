@@ -93,7 +93,7 @@ public final class VPNSession {
 
   /// The connection in progress, from `connect` until it has ended.
   @ObservationIgnored
-  private var context: VPNContext?
+  private var context: OpenConnectContext?
 
   /// Resumes `connect` once the connection is established or has failed.
   @ObservationIgnored
@@ -169,10 +169,11 @@ public final class VPNSession {
     lastError = nil
     stats = nil
 
-    let context: VPNContext
+    let context: OpenConnectContext
     do {
-      context = try VPNContext(
-        configuration: configuration, callbacks: makeCallbacks())
+      // The session answers the context's questions; see the OpenConnectContextDelegate
+      // extension at the end of this file.
+      context = try OpenConnectContext(configuration: configuration, delegate: self)
     } catch {
       lastError = error
       status = .disconnected
@@ -236,7 +237,7 @@ public final class VPNSession {
   ///
   /// Besides `connect` and `disconnect`, lifecycle events are the only thing that changes
   /// `status`.
-  private func handle(_ event: VPNContext.Lifecycle) {
+  private func handle(_ event: OpenConnectContext.Lifecycle) {
     switch event {
     case .stage(let stage):
       // After disconnect(), the status stays .disconnecting until the connection has ended.
@@ -288,55 +289,6 @@ public final class VPNSession {
     disconnectContinuations.removeAll()
   }
 
-  // MARK: - Context Callbacks
-
-  /// The callbacks the context calls on its connection thread.
-  private func makeCallbacks() -> VPNContext.Callbacks {
-    let logBroadcaster = logBroadcaster
-
-    return VPNContext.Callbacks(
-      // Auth form → the delegate, on the main actor, while the connection thread waits for the
-      // answer (semaphore bridge). If the session is gone, cancel.
-      authenticate: { [weak self] form in
-        blockForMainActor {
-          guard let self else { return nil }
-          return await self.prompt(orIfCancelled: nil) { delegate in
-            await delegate.vpnSession(self, requiresAuthentication: form)
-          }
-        }
-      },
-      // Cert validation → the delegate, the same way. If the session is gone, reject.
-      validateCertificate: { [weak self] certInfo in
-        blockForMainActor {
-          guard let self else { return false }
-          return await self.prompt(orIfCancelled: false) { delegate in
-            await delegate.vpnSession(self, shouldAcceptCertificate: certInfo)
-          }
-        }
-      },
-      // Log messages → every `logs` stream, straight from the connection thread, and the system
-      // log. The message keeps the system log's default privacy, so it's redacted outside a
-      // debugging session: at trace level it includes the login's HTTP traffic, credentials
-      // and all.
-      log: { level, message in
-        openconnectLog.log(level: level.osLogType, "\(message)")
-        logBroadcaster.yield(LogEntry(level: level, message: message))
-      },
-      // Stats → observable property. Unlike the lifecycle, stats don't go through the ordered
-      // stream: each reply hops to the main actor on its own, so it isn't ordered with the
-      // lifecycle events. A reply requested just before the connection ended can therefore
-      // arrive after `.finished` has been handled, or after the next `connect` has already
-      // reset `stats`. Replies are only applied while connected, so a late one is dropped
-      // instead of showing up as the numbers of a connection that is gone.
-      stats: { [weak self] stats in
-        Task { @MainActor in
-          guard let self, case .connected = self.status else { return }
-          self.stats = stats
-        }
-      }
-    )
-  }
-
   // MARK: - Prompts
 
   /// Asks the delegate, in a task that `disconnect()` and task cancellation can cancel.
@@ -376,6 +328,55 @@ public final class VPNSession {
         }
         self?.context?.requestStats()
       }
+    }
+  }
+}
+
+// MARK: - OpenConnectContextDelegate
+
+// The session owns its context and is its delegate: the context calls these on its connection
+// thread, from openconnect's C callbacks. They're in this file because they use the session's
+// private state.
+extension VPNSession: OpenConnectContextDelegate {
+  /// Login form → the delegate, on the main actor, while the connection thread waits for the
+  /// answer (semaphore bridge).
+  internal nonisolated func requiresAuthentication(_ form: AuthenticationForm)
+    -> AuthenticationForm?
+  {
+    blockForMainActor {
+      await self.prompt(orIfCancelled: nil) { delegate in
+        await delegate.vpnSession(self, requiresAuthentication: form)
+      }
+    }
+  }
+
+  /// Server certificate → the delegate, the same way. The delegate decides, trusted or not.
+  internal nonisolated func shouldAcceptCertificate(_ info: CertificateInfo) -> Bool {
+    blockForMainActor {
+      await self.prompt(orIfCancelled: false) { delegate in
+        await delegate.vpnSession(self, shouldAcceptCertificate: info)
+      }
+    }
+  }
+
+  /// Log message → every `logs` stream, straight from the connection thread, and the system log.
+  /// The message keeps the system log's default privacy, so it's redacted outside a debugging
+  /// session: at trace level it includes the login's HTTP traffic, credentials and all.
+  internal nonisolated func didLog(_ message: String, level: LogLevel) {
+    openconnectLog.log(level: level.osLogType, "\(message)")
+    logBroadcaster.yield(LogEntry(level: level, message: message))
+  }
+
+  /// Stats → observable property. Unlike the lifecycle, stats don't go through the ordered
+  /// stream: each reply hops to the main actor on its own, so it isn't ordered with the
+  /// lifecycle events. A reply requested just before the connection ended can therefore arrive
+  /// after `.finished` has been handled, or after the next `connect` has already reset `stats`.
+  /// Replies are only applied while connected, so a late one is dropped instead of showing up as
+  /// the numbers of a connection that is gone.
+  internal nonisolated func didReceive(_ stats: VPNStats) {
+    Task { @MainActor in
+      guard case .connected = self.status else { return }
+      self.stats = stats
     }
   }
 }

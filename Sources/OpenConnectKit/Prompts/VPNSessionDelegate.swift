@@ -7,7 +7,7 @@
 
 import Foundation
 
-/// What a `VPNSession` needs from its owner: answers to the prompts that come up while
+/// What a `VPNSession` needs from its delegate: answers to the prompts that come up while
 /// connecting.
 ///
 /// Both methods are `async`, so an implementation can present UI and wait for the user. For
@@ -49,7 +49,8 @@ import Foundation
 ///         _ session: VPNSession,
 ///         shouldAcceptCertificate info: CertificateInfo
 ///     ) async -> Bool {
-///         await readLine(prompt: "\(info.reason). Connect anyway? [y/N]") == "y"
+///         guard case .untrusted(let reason) = info.systemTrust else { return true }
+///         return await readLine(prompt: "\(reason). Connect anyway? [y/N]") == "y"
 ///     }
 /// }
 /// ```
@@ -70,15 +71,33 @@ public protocol VPNSessionDelegate {
     requiresAuthentication form: AuthenticationForm
   ) async -> AuthenticationForm?
 
-  /// Called when the server's certificate couldn't be verified, for example because it's
-  /// self-signed or doesn't match the host name.
+  /// Called with the server's certificate, to decide whether to connect to it.
+  ///
+  /// It's called for every server certificate, trusted or not. `info.systemTrust` says whether
+  /// the system trusts the certificate for the server's host name, with the system's trust
+  /// settings and the user's own (such as a company root marked "Always Trust" in Keychain
+  /// Access). The decision is yours: accepting what the system trusts and asking the user about
+  /// the rest is the usual choice, and what `VPNPrompts` does. Pinning or always showing the
+  /// certificate are others.
+  ///
+  /// Your answer holds for the rest of the connection. During one connection the session can
+  /// open several TLS connections to the server: to log in, for each attempt to re-establish a
+  /// lost connection, and with some protocols to log off. A certificate you accepted is accepted
+  /// again without asking when the same server (host name and port) presents it and
+  /// `info.systemTrust` hasn't changed, so re-establishing a lost connection doesn't wait for you.
+  /// Certificates count as the same when their public keys are, which is what `info.pin`
+  /// identifies. You're asked again about a different certificate, another server, or a changed
+  /// verdict, such as a certificate that expired during the connection. Each `connect` starts
+  /// afresh; to remember decisions across connections, store the pin (see `CertificateInfo.pin`).
   ///
   /// Return `true` to accept the certificate and proceed with the connection,
-  /// or `false` to reject it, which ends the attempt with `VPNError.certificateRejected`.
+  /// or `false` to reject it, which ends the connection attempt, or the connection if it's being
+  /// re-established, with `VPNError.certificateRejected`. After a rejection you aren't asked
+  /// again until the next `connect`.
   ///
   /// - Parameters:
   ///   - session: The VPN session requesting validation
-  ///   - info: Information about the certificate requiring validation
+  ///   - info: The server's certificate and the system's verdict on it
   /// - Returns: `true` to accept the certificate, `false` to reject
   func vpnSession(
     _ session: VPNSession,

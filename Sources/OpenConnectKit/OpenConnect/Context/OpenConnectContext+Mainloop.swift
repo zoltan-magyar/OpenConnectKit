@@ -1,8 +1,8 @@
 //
-//  VPNContext+Mainloop.swift
+//  OpenConnectContext+Mainloop.swift
 //  OpenConnectKit
 //
-//  Mainloop management extension for VPNContext
+//  Mainloop management extension for OpenConnectContext
 //
 
 import COpenConnect
@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Mainloop Management
 
-extension VPNContext {
+extension OpenConnectContext {
   /// Runs openconnect's mainloop on the connection thread until the connection ends.
   ///
   /// The mainloop handles all VPN traffic, and reconnects by itself when the connection drops,
@@ -19,7 +19,7 @@ extension VPNContext {
   ///
   /// - Returns: Why the connection ended, or `nil` if it ended because of `cancel()`.
   internal func runMainloop() -> VPNError? {
-    callbacks.clearErrorMessages()
+    state.clearErrorMessages()
 
     var ret: CInt
     repeat {
@@ -32,24 +32,26 @@ extension VPNContext {
       )
     } while ret == 0
 
-    // A cancellation isn't a failure. A certificate can also be rejected here, when the server
-    // presents a different one on reconnect.
-    switch userAbort {
-    case .cancelled?: return nil
-    case let error?: return error
-    case nil: break
+    // Our own decisions come first; openconnect's result is then only a consequence of them.
+    // That covers cancel() (-EINTR), which isn't a failure, and a certificate rejected when the
+    // server presents a different one on reconnect (also -EINTR: the certificate callback stops
+    // the reconnect with a cancel command).
+    if let userAbort {
+      return userAbort == .cancelled ? nil : userAbort
     }
 
-    switch -ret {
-    case EINTR, ECONNABORTED:  // OC_CMD_CANCEL, OC_CMD_DETACH
-      return nil
-    case EPERM:  // e.g. "Cookie is no longer valid" when reconnecting
+    // Like most of openconnect's API, the mainloop returns a negative POSIX error code; the
+    // values are documented above openconnect_mainloop() in mainloop.c.
+    switch POSIXErrorCode(rawValue: -ret) {
+    case .EPIPE?, .EPERM?:
+      // The server ended the session, or no longer accepts the cookie when reconnecting, for
+      // example because it expired.
       return .sessionEnded
     default:
       // The most recent message, unlike the connection steps: over a long session, the first
       // one may be from an earlier hiccup that has nothing to do with the end.
       return .connectionLost(
-        reason: callbacks.lastErrorMessage ?? String(cString: strerror(-ret)))
+        reason: state.lastErrorMessage ?? String(cString: strerror(-ret)))
     }
   }
 }

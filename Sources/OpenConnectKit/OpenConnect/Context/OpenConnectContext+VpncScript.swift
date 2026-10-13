@@ -1,19 +1,22 @@
 //
-//  VPNContext+VpncScript.swift
+//  OpenConnectContext+VpncScript.swift
 //  OpenConnectKit
 //
-//  LEGACY: TUN setup by openconnect, with the bundled vpnc-script
+//  TUN setup by openconnect, with a vpnc-script
 //
 
 import COpenConnect
 import Foundation
 
-// LEGACY. Everything that uses vpnc-script is in this file, so it can be deleted in one go once
-// TUN, route and DNS setup is implemented in Swift, together with the vpnc-scripts submodule,
-// its `exclude:` and `resources:` entries in Package.swift, and `VPNConfiguration.vpncScript`.
-// The checklist is in ROADMAP.md.
+// Everything that uses vpnc-script is in this file. It stays as one of two tunnel modes
+// (decided 2026-10-11): vpnc-script for processes running as root (command-line tools, helpers,
+// later Linux), the Network Extension for sandboxed apps. Plan step 6.6 reworks it: the setup
+// moves into openconnect's provide-tun handler, inside the mainloop (here it still runs before
+// the mainloop, too early for GlobalProtect ESP and PPP-based protocols), `vpncScript` and
+// `interfaceName` move from `VPNConfiguration` into the mode, and the bundled script moves into
+// its own product.
 
-extension VPNContext {
+extension OpenConnectContext {
   /// Sets up the TUN device for the VPN connection.
   ///
   /// This finds the vpnc-script and configures the TUN device.
