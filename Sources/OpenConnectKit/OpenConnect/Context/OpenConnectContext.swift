@@ -1,8 +1,8 @@
 //
-//  VPNContext.swift
+//  OpenConnectContext.swift
 //  OpenConnectKit
 //
-//  Internal wrapper around OpenConnect C API
+//  One openconnect connection (vpninfo) and the thread that drives it
 //
 
 import COpenConnect
@@ -13,16 +13,17 @@ import Foundation
 // Everything that touches `vpninfo` runs on one dedicated thread, started by `start()`:
 // authentication, CSTP, DTLS, TUN setup and then the mainloop. openconnect isn't thread-safe;
 // the only channel it supports from other threads is the command pipe, so `cancel()` and
-// `requestStats()` are the only calls other threads make. The thread reports back by calling
-// the owner's `Callbacks`, and the connection's progress through `lifecycle`, in order.
+// `requestStats()` are the only calls other threads make. The thread reports back through the
+// owner's `OpenConnectContextDelegate` (asked from openconnect's C callbacks, see
+// `OpenConnectCallbacks.swift`), and the connection's progress through `lifecycle`, in order.
 //
 // It's a thread and not `Task.detached` because every one of those calls blocks: on network
 // I/O, for as long as the user takes to fill in an auth form, and in the mainloop for the
 // whole session. Swift's cooperative thread pool expects its threads never to block.
 //
-// `vpnInfo` is freed in `deinit`, which can only run once both the owner (VPNSession) and the
-// connection thread have let go, so nothing can be using it any more.
-internal final class VPNContext: Sendable {
+// `vpnInfo` is freed in `deinit`, which can only run once both the owner and the connection
+// thread have let go, so nothing can be using it any more.
+internal final class OpenConnectContext: Sendable {
   // MARK: - Types
 
   /// The connection's progress, from the first step to the end.
@@ -60,7 +61,8 @@ internal final class VPNContext: Sendable {
 
   internal let configuration: VPNConfiguration
 
-  internal let callbacks: Callbacks
+  /// What openconnect's C callbacks work with, including the owner as delegate.
+  internal let state: CallbackState
 
   /// openconnect's connection state. Only the connection thread uses it, apart from `init` and
   /// `deinit`, which can't overlap with that thread.
@@ -73,14 +75,18 @@ internal final class VPNContext: Sendable {
 
   /// Creates the openconnect state for a connection. Nothing connects until `start()`.
   ///
+  /// - Parameter delegate: The owner, held weakly; it answers openconnect's questions.
   /// - Throws: `VPNError` if openconnect can't be set up, or the server URL is invalid.
-  internal init(configuration: VPNConfiguration, callbacks: Callbacks) throws(VPNError) {
+  internal init(
+    configuration: VPNConfiguration, delegate: any OpenConnectContextDelegate
+  ) throws(VPNError) {
     // openconnect_parse_url() accepts a URL without a host, which then only fails when
     // connecting, with an empty host name in the message.
     guard let host = configuration.serverURL.host(), !host.isEmpty else {
       throw .invalidConfiguration(reason: "The server URL has no host name")
     }
 
+    let state = CallbackState(delegate: delegate)
     guard
       let vpnInfo = openconnect_vpninfo_new(
         "AnyConnect Compatible OpenConnectKit Client",
@@ -88,13 +94,20 @@ internal final class VPNContext: Sendable {
         nil,
         processAuthFormCallback,
         nil,  // variadic progress callback, which Swift can't implement; see below
-        Unmanaged.passUnretained(callbacks).toOpaque()
+        Unmanaged.passUnretained(state).toOpaque()
       )
     else {
       throw .internalError(reason: "Could not create the openconnect session")
     }
 
-    callbacks.attach(vpnInfo)
+    state.attach(vpnInfo)
+
+    // Every server certificate must reach the certificate callback, which asks the system
+    // (SystemTrust) and then the owner, so OpenSSL must never accept one on its own. With system
+    // trust on, it would trust any CA in its compiled-in OPENSSLDIR (a path on the build
+    // machine) or in the files that SSL_CERT_FILE and SSL_CERT_DIR name, and the callback would
+    // never be called.
+    openconnect_set_system_trust(vpnInfo, 0)
 
     // Receives log messages already formatted. Set before anything can log.
     openconnect_set_progress_msg_handler(vpnInfo, progressCallback)
@@ -104,14 +117,14 @@ internal final class VPNContext: Sendable {
     guard openconnect_set_protocol(vpnInfo, configuration.vpnProtocol.rawValue) == 0 else {
       openconnect_vpninfo_free(vpnInfo)
       throw .invalidConfiguration(
-        reason: callbacks.firstErrorMessage
+        reason: state.firstErrorMessage
           ?? "openconnect doesn't support \(configuration.vpnProtocol.displayName)")
     }
 
     guard openconnect_parse_url(vpnInfo, configuration.serverURL.absoluteString) == 0 else {
       openconnect_vpninfo_free(vpnInfo)
       throw .invalidConfiguration(
-        reason: callbacks.firstErrorMessage ?? "Could not parse the server URL")
+        reason: state.firstErrorMessage ?? "Could not parse the server URL")
     }
 
     let commandPipe = openconnect_setup_cmd_pipe(vpnInfo)
@@ -125,7 +138,7 @@ internal final class VPNContext: Sendable {
     openconnect_set_stats_handler(vpnInfo, statsCallback)
 
     self.configuration = configuration
-    self.callbacks = callbacks
+    self.state = state
     self.vpnInfo = vpnInfo
     self.commandPipe = commandPipe
   }
@@ -133,32 +146,32 @@ internal final class VPNContext: Sendable {
   deinit {
     // Also closes both ends of the command pipe.
     openconnect_vpninfo_free(vpnInfo)
-    callbacks.finishLifecycle()
+    state.finishLifecycle()
   }
 
   // MARK: - Computed Properties
 
   /// The connection's progress, in order. Finishes after `.finished`.
   internal var lifecycle: AsyncStream<Lifecycle> {
-    callbacks.lifecycle
+    state.lifecycle
   }
 
   /// Whether the connection was cancelled, by `cancel()` or from the auth form.
   internal var isCancelled: Bool {
-    callbacks.isCancelled
+    state.isCancelled
   }
 
   /// `.cancelled` or `.certificateRejected` if the user stopped the connection, otherwise
   /// `nil`. Checked before a failing step's own error, which is then only a consequence.
   internal var userAbort: VPNError? {
-    if callbacks.isCancelled { return .cancelled }
-    if callbacks.isCertificateRejected { return .certificateRejected }
+    if state.isCancelled { return .cancelled }
+    if state.isCertificateRejected { return .certificateRejected }
     return nil
   }
 
   /// Why the current step failed: openconnect's first error message since the step started,
   /// or `fallback`.
   internal func errorMessage(or fallback: String) -> String {
-    callbacks.firstErrorMessage ?? fallback
+    state.firstErrorMessage ?? fallback
   }
 }

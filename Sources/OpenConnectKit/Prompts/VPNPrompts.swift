@@ -40,9 +40,13 @@ import Foundation
 ///     Button("Connect Anyway") { model.prompts.acceptCertificate() }
 ///     Button("Cancel", role: .cancel) { model.prompts.rejectCertificate() }
 /// } message: { prompt in
-///     Text(prompt.certificate.reason)
+///     Text(prompt.reason)
 /// }
 /// ```
+///
+/// Server certificates the system trusts are accepted without a prompt; only the others become a
+/// `pendingCertificate`. To decide about trusted certificates too, implement
+/// `VPNSessionDelegate` yourself.
 ///
 /// If the connection attempt is cancelled while a prompt is pending, the prompt is withdrawn:
 /// its property becomes `nil`, so a sheet or alert bound to it closes.
@@ -60,7 +64,8 @@ public final class VPNPrompts: VPNSessionDelegate {
     set { if newValue == nil { resolveAuthentication(with: nil) } }
   }
 
-  /// The server certificate waiting for a decision, or `nil`.
+  /// The server certificate waiting for a decision, or `nil`. Only certificates the system
+  /// doesn't trust are ever pending.
   ///
   /// Setting it to `nil` rejects the certificate, like `rejectCertificate()`. Other values can't
   /// be assigned and are ignored.
@@ -138,7 +143,10 @@ public final class VPNPrompts: VPNSessionDelegate {
     _ session: VPNSession,
     shouldAcceptCertificate info: CertificateInfo
   ) async -> Bool {
-    let prompt = CertificatePrompt(certificate: info)
+    guard case .untrusted(let reason) = info.systemTrust else {
+      return true
+    }
+    let prompt = CertificatePrompt(certificate: info, reason: reason)
     return await withTaskCancellationHandler {
       await withCheckedContinuation { continuation in
         resolveCertificate(with: false)  // see the authentication method
@@ -198,16 +206,21 @@ public struct AuthenticationPrompt: Identifiable, Sendable {
   }
 }
 
-/// A server certificate waiting for the user's decision. `Identifiable`, so it can drive
-/// `.sheet(item:)` as well as an alert.
+/// A server certificate the system doesn't trust, waiting for the user's decision.
+/// `Identifiable`, so it can drive `.sheet(item:)` as well as an alert.
 public struct CertificatePrompt: Identifiable, Sendable {
   public let id: UUID
 
-  /// Why the certificate couldn't be verified.
+  /// The certificate and its details.
   public let certificate: CertificateInfo
 
-  internal init(certificate: CertificateInfo) {
+  /// Why the system doesn't trust it, in the system's words: the reason in
+  /// `certificate.systemTrust`, ready to show.
+  public let reason: String
+
+  internal init(certificate: CertificateInfo, reason: String) {
     self.id = UUID()
     self.certificate = certificate
+    self.reason = reason
   }
 }

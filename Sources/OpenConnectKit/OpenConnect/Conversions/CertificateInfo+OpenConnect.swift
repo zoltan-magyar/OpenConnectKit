@@ -9,16 +9,10 @@ import COpenConnect
 import Foundation
 
 extension CertificateInfo {
-  // Collects the server certificate's details. Only valid inside openconnect's certificate
-  // callback, on the connection thread: that's where openconnect guarantees the certificate is
-  // available.
-  internal init(reason cReason: UnsafePointer<CChar>?, vpnInfo: OpaquePointer?) {
-    let reason = cReason.map { String(cString: $0) } ?? "Unknown certificate validation error"
-    guard let vpnInfo else {
-      self.init(reason: reason)
-      return
-    }
-
+  // Collects the server certificate's details and the system's verdict on it. Only valid inside
+  // openconnect's certificate callback, on the connection thread: that's where openconnect
+  // guarantees the certificate is available. Blocks while the system evaluates the chain.
+  internal init(vpnInfo: OpaquePointer) {
     // Both buffers are allocated by openconnect and must be freed with
     // openconnect_free_cert_info().
     var derData: Data?
@@ -38,7 +32,7 @@ extension CertificateInfo {
     }
 
     self.init(
-      reason: reason,
+      systemTrust: SystemTrust(vpnInfo: vpnInfo),
       hostname: openconnect_get_dnsname(vpnInfo).map { String(cString: $0) },
       // Owned by openconnect, valid while the connection lasts; copied here.
       pin: openconnect_get_peer_cert_hash(vpnInfo).map { String(cString: $0) },

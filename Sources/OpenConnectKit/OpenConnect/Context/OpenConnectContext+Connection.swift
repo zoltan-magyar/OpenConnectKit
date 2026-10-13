@@ -1,8 +1,8 @@
 //
-//  VPNContext+Connection.swift
+//  OpenConnectContext+Connection.swift
 //  OpenConnectKit
 //
-//  Connection management extension for VPNContext
+//  Connection management extension for OpenConnectContext
 //
 
 import COpenConnect
@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Connection Management
 
-extension VPNContext {
+extension OpenConnectContext {
   /// Starts the connection on its own thread. Progress and the outcome arrive in `lifecycle`.
   ///
   /// Call it once. The thread keeps the context alive until the connection has ended.
@@ -25,19 +25,19 @@ extension VPNContext {
 
   /// The connection thread: connects, then runs the mainloop until the connection ends.
   private func run() {
-    defer { callbacks.finishLifecycle() }
+    defer { state.finishLifecycle() }
 
     do {
       try establish()
     } catch {
       // If the user cancelled or rejected the certificate, the step's own error is only a
       // consequence of that.
-      callbacks.report(.finished(userAbort ?? error))
+      state.report(.finished(userAbort ?? error))
       return
     }
 
-    callbacks.report(.established(connectionInfo()))
-    callbacks.report(.finished(runMainloop()))
+    state.report(.established(connectionInfo()))
+    state.report(.finished(runMainloop()))
   }
 
   /// Connects to VPN: auth cookie -> CSTP -> DTLS -> TUN setup
@@ -64,18 +64,18 @@ extension VPNContext {
       // Not fatal: the server may not offer DTLS at all ("No DTLS address"). Like openconnect's
       // own client, carry on over TLS, and disable DTLS so reconnects don't keep retrying it.
       openconnect_disable_dtls(vpnInfo)
-      callbacks.log(.info, "DTLS unavailable, using TLS only")
+      state.log(.info, "DTLS unavailable, using TLS only")
     }
 
     begin(.configuringNetwork)
-    try setupTunDevice()  // LEGACY, see VPNContext+VpncScript.swift
+    try setupTunDevice()  // LEGACY, see OpenConnectContext+VpncScript.swift
   }
 
   /// Reports that a step started, and forgets error messages from earlier steps, so a failure
   /// is explained by a message from the step that failed.
   private func begin(_ stage: ConnectionStage) {
-    callbacks.clearErrorMessages()
-    callbacks.report(.stage(stage))
+    state.clearErrorMessages()
+    state.report(.stage(stage))
   }
 
   /// The details of the established connection. Read here, on the connection thread, before

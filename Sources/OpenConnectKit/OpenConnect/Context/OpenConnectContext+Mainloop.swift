@@ -1,8 +1,8 @@
 //
-//  VPNContext+Mainloop.swift
+//  OpenConnectContext+Mainloop.swift
 //  OpenConnectKit
 //
-//  Mainloop management extension for VPNContext
+//  Mainloop management extension for OpenConnectContext
 //
 
 import COpenConnect
@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Mainloop Management
 
-extension VPNContext {
+extension OpenConnectContext {
   /// Runs openconnect's mainloop on the connection thread until the connection ends.
   ///
   /// The mainloop handles all VPN traffic, and reconnects by itself when the connection drops,
@@ -19,7 +19,7 @@ extension VPNContext {
   ///
   /// - Returns: Why the connection ended, or `nil` if it ended because of `cancel()`.
   internal func runMainloop() -> VPNError? {
-    callbacks.clearErrorMessages()
+    state.clearErrorMessages()
 
     var ret: CInt
     repeat {
@@ -49,7 +49,7 @@ extension VPNContext {
       // The most recent message, unlike the connection steps: over a long session, the first
       // one may be from an earlier hiccup that has nothing to do with the end.
       return .connectionLost(
-        reason: callbacks.lastErrorMessage ?? String(cString: strerror(-ret)))
+        reason: state.lastErrorMessage ?? String(cString: strerror(-ret)))
     }
   }
 }

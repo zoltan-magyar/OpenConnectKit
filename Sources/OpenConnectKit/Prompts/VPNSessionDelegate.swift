@@ -49,7 +49,8 @@ import Foundation
 ///         _ session: VPNSession,
 ///         shouldAcceptCertificate info: CertificateInfo
 ///     ) async -> Bool {
-///         await readLine(prompt: "\(info.reason). Connect anyway? [y/N]") == "y"
+///         guard case .untrusted(let reason) = info.systemTrust else { return true }
+///         return await readLine(prompt: "\(reason). Connect anyway? [y/N]") == "y"
 ///     }
 /// }
 /// ```
@@ -70,15 +71,21 @@ public protocol VPNSessionDelegate {
     requiresAuthentication form: AuthenticationForm
   ) async -> AuthenticationForm?
 
-  /// Called when the server's certificate couldn't be verified, for example because it's
-  /// self-signed or doesn't match the host name.
+  /// Called with the server's certificate, to decide whether to connect to it.
+  ///
+  /// It's called for every server, once per connection. `info.systemTrust` says whether the
+  /// system trusts the certificate for the server's host name, with the system's trust settings
+  /// and the user's own (such as a company root marked "Always Trust" in Keychain Access). The
+  /// decision is yours: accepting what the system trusts and asking the user about the rest is
+  /// the usual choice, and what `VPNPrompts` does. Pinning or always showing the certificate
+  /// are others.
   ///
   /// Return `true` to accept the certificate and proceed with the connection,
   /// or `false` to reject it, which ends the attempt with `VPNError.certificateRejected`.
   ///
   /// - Parameters:
   ///   - session: The VPN session requesting validation
-  ///   - info: Information about the certificate requiring validation
+  ///   - info: The server's certificate and the system's verdict on it
   /// - Returns: `true` to accept the certificate, `false` to reject
   func vpnSession(
     _ session: VPNSession,
