@@ -334,8 +334,9 @@ public final class VPNSession {
 
 // MARK: - OpenConnectContextDelegate
 
-// The session is its context's owner: the context asks these on its connection thread, from
-// openconnect's C callbacks. They're in this file because they use the session's private state.
+// The session owns its context and is its delegate: the context calls these on its connection
+// thread, from openconnect's C callbacks. They're in this file because they use the session's
+// private state.
 extension VPNSession: OpenConnectContextDelegate {
   /// Login form → the delegate, on the main actor, while the connection thread waits for the
   /// answer (semaphore bridge).

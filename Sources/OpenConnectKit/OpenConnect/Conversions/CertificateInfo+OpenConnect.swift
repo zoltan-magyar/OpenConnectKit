@@ -9,9 +9,11 @@ import COpenConnect
 import Foundation
 
 extension CertificateInfo {
-  // Collects the server certificate's details and the system's verdict on it. Only valid inside
-  // openconnect's certificate callback, on the connection thread: that's where openconnect
-  // guarantees the certificate is available. Blocks while the system evaluates the chain.
+  /// Collects the server certificate's details and the system's verdict on it.
+  ///
+  /// Only valid inside openconnect's certificate callback, on the connection thread: that's
+  /// where openconnect guarantees the certificate is available. Blocks while the system
+  /// evaluates the chain.
   internal init(vpnInfo: OpaquePointer) {
     // Both buffers are allocated by openconnect and must be freed with
     // openconnect_free_cert_info().

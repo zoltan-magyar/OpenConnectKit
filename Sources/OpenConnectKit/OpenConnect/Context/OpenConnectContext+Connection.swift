@@ -35,9 +35,12 @@ extension OpenConnectContext {
       state.report(.finished(userAbort ?? error))
       return
     }
-
     state.report(.established(connectionInfo()))
-    state.report(.finished(runMainloop()))
+
+    // Blocks for the rest of the session: the mainloop carries the traffic and reconnects by
+    // itself, and only returns once the connection has ended.
+    let error = runMainloop()
+    state.report(.finished(error))
   }
 
   /// Connects to VPN: auth cookie -> CSTP -> DTLS -> TUN setup
@@ -64,7 +67,7 @@ extension OpenConnectContext {
       // Not fatal: the server may not offer DTLS at all ("No DTLS address"). Like openconnect's
       // own client, carry on over TLS, and disable DTLS so reconnects don't keep retrying it.
       openconnect_disable_dtls(vpnInfo)
-      state.log(.info, "DTLS unavailable, using TLS only")
+      state.delegate?.didLog("DTLS unavailable, using TLS only", level: .info)
     }
 
     begin(.configuringNetwork)
