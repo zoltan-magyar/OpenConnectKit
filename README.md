@@ -35,7 +35,7 @@ brew install autoconf automake libtool pkg-config
 
 This clones OpenSSL and OpenConnect, builds both for arm64, and packages everything into `Frameworks/COpenConnect.xcframework`. The first run takes a few minutes.
 
-OpenConnect comes from the tag `swiftconnect-2` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`, and [!667](https://gitlab.com/openconnect/openconnect/-/merge_requests/667), which adds `openconnect_set_reconnecting_handler()`. The build switches back to upstream once a release includes them.
+OpenConnect comes from the tag `swiftconnect-3` on [a fork](https://gitlab.com/zoltan-magyar/openconnect): upstream `master` plus [!664](https://gitlab.com/openconnect/openconnect/-/merge_requests/664) and [!665](https://gitlab.com/openconnect/openconnect/-/merge_requests/665), which add `openconnect_set_progress_msg_handler()`, [!667](https://gitlab.com/openconnect/openconnect/-/merge_requests/667), which adds `openconnect_set_reconnecting_handler()`, and [!671](https://gitlab.com/openconnect/openconnect/-/merge_requests/671), which adds `openconnect_set_provide_tun_handler()`. The build switches back to upstream once a release includes them.
 
 **3. Build the Swift package:**
 
